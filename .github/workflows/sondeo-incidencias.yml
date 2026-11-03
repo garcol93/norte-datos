@@ -1,0 +1,36 @@
+name: Sondeo incidencias DGT
+
+# Solo mide los feeds de incidencias (tamaño, compresión y contenido) para
+# decidir cómo llevarlos a la app. No publica nada.
+on:
+  workflow_dispatch:
+
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Descargar y medir
+        run: |
+          set +e
+          for u in \
+            https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v37.xml \
+            https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v36.xml \
+            https://infocar.dgt.es/datex2/dgt/SituationPublication/all/content.xml \
+            https://infocar.dgt.es/datex2/dt-gv/SituationPublication/all/content.xml ; do
+            f=$(echo "$u" | md5sum | cut -c1-8).xml
+            curl -sL --compressed -m 120 -o "$f" -w "$u → HTTP %{http_code}, %{size_download} bytes descargados\n" "$u"
+            curl -sI -m 30 -H 'Accept-Encoding: gzip' "$u" | grep -iE "content-(length|encoding|type)|last-modified|cache-control|etag" | sed 's/^/   cabecera: /'
+            [ -s "$f" ] || continue
+            echo "   tamaño $(stat -c %s "$f") · gzip $(gzip -9c "$f" | wc -c)"
+            echo "   situaciones: $(grep -o '<[a-zA-Z0-9:]*situation ' "$f" | wc -l) · registros: $(grep -oE '<[a-zA-Z0-9:]*situationRecord ' "$f" | wc -l)"
+            echo "   tipos:"; grep -oE 'xsi:type="[^"]*"' "$f" | sort | uniq -c | sort -rn | head -25 | sed 's/^/     /'
+            echo "   causas:"; grep -oE '<[a-zA-Z0-9:]*(causeType|roadworksType|obstructionType|accidentType|poorEnvironmentType|roadMaintenanceType)>[^<]*' "$f" | sed 's/.*>//' | sort | uniq -c | sort -rn | head -20 | sed 's/^/     /'
+            echo "   ---- primer registro ----"
+            python3 - "$f" <<'PY'
+          import sys, re
+          t = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+          m = re.search(r"<[\w:]*situationRecord[ >].*?</[\w:]*situationRecord>", t, re.S)
+          print((m.group(0) if m else t[:3000])[:6000])
+          PY
+          done
