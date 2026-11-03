@@ -202,11 +202,12 @@ def main() -> None:
             anadir("fijo", "Radar fijo en autovía",
                    f"{p.get('carretera') or 'Autovía'} a {lim + 20} km/h: aviso a la distancia elegida, pitido y límite superado",
                    p.get("carretera"), lim + 20, recorrido(grafo, *ida, 3000, 1000))
-        vuelta = grafo.mas_cercana(pos, excluir_rumbo=p["rumbo"])
-        if vuelta:
+            # Calzada contraria: el mismo tramo recorrido al revés (unos 3 km hasta
+            # pasar el radar). El rumbo es el opuesto al del radar, así que no debe avisar.
+            vuelta = list(reversed(recorrido(grafo, *ida, 1000, 3000)))
             anadir("contraria", "Radar en la calzada contraria",
                    f"{p.get('carretera') or 'Autovía'} en sentido contrario: no debe avisar",
-                   p.get("carretera"), p["limite"], recorrido(grafo, *vuelta, 3000, 1000))
+                   p.get("carretera"), p["limite"], vuelta)
     if tramo:
         p = tramo["properties"]
         ini, fin = tramo["geometry"]["coordinates"][0], tramo["geometry"]["coordinates"][-1]
