@@ -71,6 +71,32 @@ def main() -> None:
                     "version": asset["updated_at"],
                 })
 
+    # Rutas (teselas de Valhalla troceadas): la release más reciente de cada región
+    rutas: dict[str, dict] = {}
+    for rel in sorted((r for r in releases if r["tag_name"].startswith("rutas-")),
+                      key=lambda r: r["tag_name"], reverse=True):
+        urls = {a["name"]: a["browser_download_url"] for a in rel["assets"]}
+        for nombre_archivo, url in urls.items():
+            if not nombre_archivo.endswith(".rutas.json"):
+                continue
+            with urllib.request.urlopen(url, timeout=60) as r:
+                manifiesto = json.load(r)
+            ident = manifiesto["id"]
+            if ident in rutas:
+                continue
+            partes = [{"url": urls[p["archivo"]], "bytes": p["bytes"]} for p in manifiesto["partes"] if p["archivo"] in urls]
+            if len(partes) != len(manifiesto["partes"]):
+                continue  # release incompleta
+            rutas[ident] = {
+                "id": ident,
+                "nombre": manifiesto["nombre"],
+                "version": manifiesto["version"],
+                "valhalla": manifiesto["valhalla"],
+                "bytes": manifiesto["bytes"],
+                "sha256": manifiesto["sha256"],
+                "partes": partes,
+            }
+
     orden = list(nombres)
     catalogo = {
         "formato": 1,
@@ -78,10 +104,11 @@ def main() -> None:
         "atribucion": "© OpenStreetMap contributors; radares: DGT (nap.dgt.es)",
         "mapas": sorted(mapas.values(), key=lambda m: orden.index(m["id"]) if m["id"] in orden else 99),
         "radares": radares,
+        "rutas": list(rutas.values()),
     }
     opciones.salida.parent.mkdir(parents=True, exist_ok=True)
     opciones.salida.write_text(json.dumps(catalogo, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"catálogo: {len(mapas)} mapas, {len(radares)} archivos de radares")
+    print(f"catálogo: {len(mapas)} mapas, {len(radares)} archivos de radares, {len(rutas)} paquetes de rutas")
 
 
 if __name__ == "__main__":

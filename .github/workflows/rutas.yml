@@ -1,0 +1,107 @@
+name: Generar rutas
+
+# Teselas de Valhalla para calcular rutas sin internet en la app.
+# Se generan con la misma versión de Valhalla que usa valhalla-mobile (3.9.0).
+# El día 3 de cada mes, o a mano desde Actions («Run workflow»).
+on:
+  schedule:
+    - cron: "41 2 3 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rutas
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  VALHALLA: ghcr.io/valhalla/valhalla:3.9.0
+
+jobs:
+  iberia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Liberar espacio en disco
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null
+          df -h /
+
+      - name: Datos de OpenStreetMap (España, Portugal y Andorra)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+          mkdir -p datos
+          for r in spain portugal andorra; do
+            curl -sfL --retry 3 -o "datos/$r.osm.pbf" "https://download.geofabrik.de/europe/$r-latest.osm.pbf"
+          done
+          osmium merge datos/spain.osm.pbf datos/portugal.osm.pbf datos/andorra.osm.pbf -o datos/iberia.osm.pbf
+          rm datos/spain.osm.pbf datos/portugal.osm.pbf datos/andorra.osm.pbf
+          ls -la datos
+
+      - name: Teselas de Valhalla
+        run: |
+          docker pull -q "$VALHALLA"
+          docker run --rm -v "$PWD/datos:/datos" "$VALHALLA" bash -c '
+            set -e
+            cd /datos
+            valhalla_build_config \
+              --mjolnir-tile-dir /datos/teselas \
+              --mjolnir-tile-extract /datos/rutas.tar \
+              --mjolnir-admin /datos/admins.sqlite \
+              --mjolnir-concurrency "$(nproc)" > valhalla.json
+            valhalla_build_admins -c valhalla.json iberia.osm.pbf
+            valhalla_build_tiles -c valhalla.json iberia.osm.pbf
+            valhalla_build_extract -c valhalla.json -v
+          '
+          sudo chown -R "$(id -u)" datos
+          ls -la datos
+
+      - name: Prueba de ruta Madrid → Lisboa
+        run: |
+          docker run --rm -v "$PWD/datos:/datos" "$VALHALLA" bash -c '
+            cd /datos
+            valhalla_service valhalla.json route "{\"locations\":[{\"lat\":40.4168,\"lon\":-3.7038},{\"lat\":38.7223,\"lon\":-9.1393}],\"costing\":\"auto\",\"language\":\"es-ES\"}" \
+              | head -c 600
+          '
+
+      - name: Trocear y publicar
+        run: |
+          fecha=$(date -u +%Y%m%d)
+          etiqueta="rutas-$fecha"
+          cd datos
+          total=$(stat -c %s rutas.tar)
+          suma=$(sha256sum rutas.tar | cut -d' ' -f1)
+          # GitHub Releases admite hasta 2 GiB por archivo
+          split -b 1900M -d -a 2 rutas.tar iberia.tar.parte
+          rm rutas.tar
+          python3 - "$fecha" "$total" "$suma" <<'PY'
+          import json, os, sys
+          fecha, total, suma = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+          partes = sorted(p for p in os.listdir(".") if p.startswith("iberia.tar.parte"))
+          json.dump({
+              "id": "iberia",
+              "nombre": "Península Ibérica (España, Portugal y Andorra)",
+              "valhalla": "3.9.0",
+              "version": fecha,
+              "bytes": total,
+              "sha256": suma,
+              "partes": [{"archivo": p, "bytes": os.path.getsize(p)} for p in partes],
+          }, open("iberia.rutas.json", "w"), ensure_ascii=False, indent=1)
+          print(open("iberia.rutas.json").read())
+          PY
+          gh release view "$etiqueta" >/dev/null 2>&1 || gh release create "$etiqueta" \
+            --title "Rutas $fecha" \
+            --notes "Teselas de Valhalla 3.9.0 para rutas sin internet (Península Ibérica). Se descargan troceadas y la app las une. © OpenStreetMap contributors."
+          gh release upload "$etiqueta" iberia.tar.parte* iberia.rutas.json --clobber
+
+      - name: Catálogo
+        run: |
+          python3 scripts/catalogo.py --salida build/catalogo.json
+          gh release view catalogo >/dev/null 2>&1 || gh release create catalogo \
+            --title "Catálogo" --notes "Índice de mapas y radares que consulta la app Norte."
+          gh release upload catalogo build/catalogo.json --clobber
