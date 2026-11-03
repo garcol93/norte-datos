@@ -34,18 +34,39 @@ jobs:
       (github.event_name == 'schedule' && github.event.schedule == '17 3 * * 1') ||
       (github.event_name == 'workflow_dispatch' && inputs.que != 'mapas')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: Herramientas
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+          pip install -q shapely
       - name: Pruebas
         run: python3 -m unittest discover -s tests -v
       - name: Radares DGT
         run: python3 scripts/radares_dgt.py --salida build/dgt.geojson
+      # Límites de velocidad, radares de Cataluña y País Vasco y contornos de
+      # esas dos comunidades, desde OpenStreetMap
+      - name: Datos de OpenStreetMap
+        run: |
+          curl -sfL --retry 3 -o espana.osm.pbf https://download.geofabrik.de/europe/spain-latest.osm.pbf
+          osmium tags-filter espana.osm.pbf \
+            w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link,secondary,secondary_link,tertiary,tertiary_link,unclassified,residential,living_street \
+            -o vias.osm.pbf
+          osmium export vias.osm.pbf -f geojsonseq --geometry-types=linestring -o vias.geojsonseq
+          osmium tags-filter espana.osm.pbf n/highway=speed_camera -o camaras.osm.pbf
+          osmium export camaras.osm.pbf -f geojsonseq --geometry-types=point -a id -o camaras.geojsonseq
+          osmium tags-filter espana.osm.pbf r/admin_level=4 -o comunidades.osm.pbf
+          osmium export comunidades.osm.pbf -f geojsonseq --geometry-types=polygon -o comunidades.geojsonseq
+          python3 scripts/osm_radares.py --dgt build/dgt.geojson \
+            --vias vias.geojsonseq --camaras camaras.geojsonseq --comunidades comunidades.geojsonseq \
+            --salida-osm build/osm.geojson --salida-zonas build/zonas.geojson
+          rm -f espana.osm.pbf vias.osm.pbf vias.geojsonseq
       - name: Publicar radares
         run: |
           gh release view radares >/dev/null 2>&1 || gh release create radares \
             --title "Radares" --notes "Radares fijos y de tramo para Norte. Se actualizan cada semana."
-          gh release upload radares build/dgt.geojson --clobber
+          gh release upload radares build/dgt.geojson build/osm.geojson build/zonas.geojson --clobber
       - name: Catálogo
         run: |
           python3 scripts/catalogo.py --salida build/catalogo.json

@@ -8,6 +8,7 @@ Datos abiertos para **Norte** (navegación offline para radios de coche Android)
 
 ## Scripts
 - `scripts/radares_dgt.py`: convierte el inventario DATEX II de la DGT a GeoJSON.
+- `scripts/osm_radares.py`: límites de velocidad de OSM para los radares DGT, radares OSM de Cataluña y País Vasco y contornos de esas comunidades.
 - `scripts/catalogo.py`: genera `catalogo.json` (lo que consulta la app) a partir de las releases.
 - `scripts/regiones.json`: regiones de mapa descargables.
 - `.github/workflows/datos.yml`: radares cada lunes y mapas el día 2 de cada mes (también a mano).
