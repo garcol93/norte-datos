@@ -61,12 +61,14 @@ jobs:
           python3 scripts/osm_radares.py --dgt build/dgt.geojson \
             --vias vias.geojsonseq --camaras camaras.geojsonseq --comunidades comunidades.geojsonseq \
             --salida-osm build/osm.geojson --salida-zonas build/zonas.geojson
+          python3 scripts/simulaciones.py --dgt build/dgt.geojson --osm build/osm.geojson \
+            --vias vias.geojsonseq --salida build/simulaciones.json
           rm -f espana.osm.pbf vias.osm.pbf vias.geojsonseq
       - name: Publicar radares
         run: |
           gh release view radares >/dev/null 2>&1 || gh release create radares \
             --title "Radares" --notes "Radares fijos y de tramo para Norte. Se actualizan cada semana."
-          gh release upload radares build/dgt.geojson build/osm.geojson build/zonas.geojson --clobber
+          gh release upload radares build/dgt.geojson build/osm.geojson build/zonas.geojson build/simulaciones.json --clobber
       - name: Catálogo
         run: |
           python3 scripts/catalogo.py --salida build/catalogo.json
