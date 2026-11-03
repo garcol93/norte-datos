@@ -200,7 +200,7 @@ def main() -> None:
         if ida:
             lim = p["limite"]
             anadir("fijo", "Radar fijo en autovía",
-                   f"{p.get('carretera') or 'Autovía'} a {lim + 20} km/h: aviso a la distancia elegida, pitido y límite superado",
+                   f"{p.get('carretera') or 'Autovía'} a {lim + 20} km/h: aviso, pitido y límite superado",
                    p.get("carretera"), lim + 20, recorrido(grafo, *ida, 3000, 1000))
             # Calzada contraria: el mismo tramo recorrido al revés (unos 3 km hasta
             # pasar el radar). El rumbo es el opuesto al del radar, así que no debe avisar.
@@ -214,7 +214,7 @@ def main() -> None:
         ida = grafo.mas_cercana(ini, rumbo=p["rumbo"])
         if ida:
             anadir("tramo", "Radar de tramo",
-                   f"{p.get('carretera') or 'Tramo'}: aviso de inicio, velocidad media y fin del tramo",
+                   f"{p.get('carretera') or 'Tramo'}: inicio, media y fin del tramo",
                    p.get("carretera"), p["limite"] - 5, recorrido(grafo, *ida, 1500, 500, hasta=fin))
     if catalan:
         p = catalan["properties"]
@@ -222,7 +222,7 @@ def main() -> None:
         ida = grafo.mas_cercana(pos, rumbo=p["rumbo"])
         if ida:
             anadir("cataluna", "Cataluña",
-                   "Mensaje «Solo OpenStreetMap» y un radar de OpenStreetMap",
+                   "Mensaje «Solo OpenStreetMap» y radar de OSM",
                    p.get("carretera"), p["limite"], recorrido(grafo, *ida, 3000, 800))
 
     o.salida.parent.mkdir(parents=True, exist_ok=True)
