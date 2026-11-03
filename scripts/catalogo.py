@@ -5,7 +5,7 @@ La app de Norte descarga este catálogo (URL fija) para saber qué mapas y
 radares hay, su versión y su tamaño.
 
 Uso (en GitHub Actions): python3 scripts/catalogo.py --salida build/catalogo.json
-Necesita GITHUB_TOKEN y GITHUB_REPOSITORY en el entorno.
+Necesita GITHUB_TOKEN (o GH_TOKEN) y GITHUB_REPOSITORY en el entorno.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ RAIZ = Path(__file__).resolve().parent
 def api(ruta: str):
     url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/{ruta}"
     peticion = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+        "Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN') or os.environ['GH_TOKEN']}",
         "Accept": "application/vnd.github+json",
     })
     with urllib.request.urlopen(peticion, timeout=60) as r:
