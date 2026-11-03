@@ -99,8 +99,21 @@ jobs:
           limite=$((2 * 1024 * 1024 * 1024 - 1))
           while read -r id bbox; do
             echo "::group::$id ($bbox)"
-            go-pmtiles extract "https://build.protomaps.com/$FECHA.pmtiles" "$id.pmtiles" \
-              --bbox="$bbox" --maxzoom=14 </dev/null
+            if gh release view "$etiqueta" --json assets -q '.assets[].name' </dev/null | grep -qx "$id.pmtiles"; then
+              echo "$id ya está publicado en $etiqueta, se salta"
+              echo "::endgroup::"
+              continue
+            fi
+            # El servidor de Protomaps a veces responde 500: se reintenta
+            for intento in 1 2 3 4; do
+              if go-pmtiles extract "https://build.protomaps.com/$FECHA.pmtiles" "$id.pmtiles" \
+                --bbox="$bbox" --maxzoom=14 </dev/null; then
+                break
+              fi
+              if [ "$intento" = 4 ]; then echo "::error::No se pudo extraer $id"; exit 1; fi
+              echo "Reintentando $id en $((intento * 30)) s"
+              sleep $((intento * 30))
+            done
             tam=$(stat -c %s "$id.pmtiles")
             echo "$id: $tam bytes"
             if [ "$tam" -gt "$limite" ]; then
