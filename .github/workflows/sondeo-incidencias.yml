@@ -1,9 +1,13 @@
 name: Sondeo incidencias DGT
 
 # Solo mide los feeds de incidencias (tamaño, compresión y contenido) para
-# decidir cómo llevarlos a la app. No publica nada.
+# decidir cómo llevarlos a la app. Publica una muestra en la release
+# «sondeo» para las pruebas del lector de la app.
 on:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   medir:
@@ -34,3 +38,12 @@ jobs:
           print((m.group(0) if m else t[:3000])[:6000])
           PY
           done
+
+      - name: Publicar muestra
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -sfL --compressed -m 120 -o incidencias-dgt.xml https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v37.xml
+          gh release view sondeo -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create sondeo -R "$GITHUB_REPOSITORY" --title "Muestras para pruebas" --notes "Copias puntuales de feeds para las pruebas de la app."
+          gh release upload sondeo incidencias-dgt.xml -R "$GITHUB_REPOSITORY" --clobber
