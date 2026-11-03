@@ -36,5 +36,17 @@ class RecorridoTest(unittest.TestCase):
         self.assertGreater(puntos[0][1], puntos[-1][1])  # hacia el sur
 
 
+class EmpalmeTest(unittest.TestCase):
+    def test_une_por_un_vertice_intermedio(self):
+        g = Grafo()
+        # La segunda vía empieza en un vértice intermedio de la primera (no en su final)
+        primera = norte(0, 3000)
+        g.anadir(primera, {"highway": "motorway"})
+        g.anadir(norte(2000, 6000, lon=-3.7)[0:1] + norte(2250, 6000, lon=-3.7001), {"highway": "motorway"})
+        via, tramo = g.mas_cercana([-3.7001, 40 + 5000 * GRADO], rumbo=0)
+        puntos = recorrido(g, via, tramo, 3500, 0)
+        self.assertLess(puntos[0][1], 40 + 1700 * GRADO)  # ha retrocedido por la primera vía
+
+
 if __name__ == "__main__":
     unittest.main()

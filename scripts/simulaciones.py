@@ -40,13 +40,12 @@ def longitud(puntos) -> float:
 
 
 class Grafo:
-    """Vías de un solo sentido de circulación (en el sentido de marcha) cerca de los radares."""
+    """Vías en el sentido de marcha cerca de los radares, unidas por cualquier vértice común."""
 
     def __init__(self):
         self.vias: list[list[list[float]]] = []
         self.tipo: list[str] = []
-        self.por_inicio: dict[tuple, list[int]] = {}
-        self.por_fin: dict[tuple, list[int]] = {}
+        self.por_vertice: dict[tuple, list[tuple[int, int]]] = {}
 
     def anadir(self, coords, tags):
         sentido = sentido_unico(tags)
@@ -58,8 +57,8 @@ class Grafo:
             i = len(self.vias)
             self.vias.append(c)
             self.tipo.append(tags.get("highway", ""))
-            self.por_inicio.setdefault(tuple(c[0]), []).append(i)
-            self.por_fin.setdefault(tuple(c[-1]), []).append(i)
+            for k, p in enumerate(c):
+                self.por_vertice.setdefault(tuple(p), []).append((i, k))
 
     def mas_cercana(self, p, rumbo=None, excluir_rumbo=None):
         """(vía, índice de tramo) más cercana a p, opcionalmente con un rumbo dado."""
@@ -80,55 +79,69 @@ class Grafo:
                     mejor = (d, i, k)
         return None if mejor is None else (mejor[1], mejor[2])
 
-    def siguiente(self, via: int) -> int | None:
-        """Vía que continúa a esta con el menor giro, prefiriendo el mismo tipo."""
-        c = self.vias[via]
-        rumbo = rumbo_segmento(c[-2], c[-1])
-        candidatas = [j for j in self.por_inicio.get(tuple(c[-1]), []) if self.vias[j] != list(reversed(c))]
-        return self._mejor(candidatas, lambda j: rumbo_segmento(self.vias[j][0], self.vias[j][1]), rumbo, via)
+    def continuar(self, via: int, vertice: int, adelante: bool):
+        """(vía, vértice) por donde seguir desde ese vértice, con el menor giro.
 
-    def anterior(self, via: int) -> int | None:
+        Hacia delante busca vías que pasen por el vértice y sigan después; hacia
+        atrás, vías que lleguen a él. Así se unen también empalmes a mitad de vía.
+        """
         c = self.vias[via]
-        rumbo = rumbo_segmento(c[0], c[1])
-        candidatas = [j for j in self.por_fin.get(tuple(c[0]), []) if self.vias[j] != list(reversed(c))]
-        return self._mejor(candidatas, lambda j: rumbo_segmento(self.vias[j][-2], self.vias[j][-1]), rumbo, via)
-
-    def _mejor(self, candidatas, rumbo_de, rumbo, via):
+        p = c[vertice]
+        if adelante:
+            rumbo = rumbo_segmento(c[vertice - 1], p) if vertice > 0 else rumbo_segmento(p, c[vertice + 1])
+        else:
+            rumbo = rumbo_segmento(p, c[vertice + 1]) if vertice + 1 < len(c) else rumbo_segmento(c[vertice - 1], p)
         mejor = None
-        for j in candidatas:
-            giro = diferencia_angulo(rumbo_de(j), rumbo)
+        for j, k in self.por_vertice.get(tuple(p), []):
+            if j == via:
+                continue
+            otra = self.vias[j]
+            if adelante and k + 1 < len(otra):
+                giro = diferencia_angulo(rumbo_segmento(otra[k], otra[k + 1]), rumbo)
+            elif not adelante and k > 0:
+                giro = diferencia_angulo(rumbo_segmento(otra[k - 1], otra[k]), rumbo)
+            else:
+                continue
             if giro > 60:
                 continue
             coste = giro + (0 if self.tipo[j] == self.tipo[via] else 30)
             if mejor is None or coste < mejor[0]:
-                mejor = (coste, j)
-        return None if mejor is None else mejor[1]
+                mejor = (coste, j, k)
+        return None if mejor is None else (mejor[1], mejor[2])
 
 
 def recorrido(grafo: Grafo, via: int, tramo: int, antes_m: float, despues_m: float, hasta=None):
     """Puntos desde [antes_m] antes del tramo dado hasta [despues_m] después (o hasta pasar [hasta])."""
     c = grafo.vias[via]
     atras = list(reversed(c[: tramo + 1]))
-    v = via
+    v, k = via, 0
+    vistas = {via}
     while longitud(atras) < antes_m:
-        v = grafo.anterior(v)
-        if v is None:
+        sig = grafo.continuar(v, k, adelante=False)
+        if sig is None or sig[0] in vistas:
             break
-        atras += list(reversed(grafo.vias[v][:-1]))
+        v, k = sig
+        vistas.add(v)
+        atras += list(reversed(grafo.vias[v][:k]))
+        k = 0  # se sigue hacia atrás desde el primer vértice de esa vía
     delante = c[tramo + 1:]
-    v = via
+    v, k = via, len(c) - 1
+    vistas = {via}
     recorrido_tras = 0.0
     pasado = hasta is None
     for _ in range(400):
-        if not pasado and any(metros(p, hasta) < 60 for p in delante[-50:]):
+        if not pasado and any(metros(p, hasta) < 60 for p in delante[-80:]):
             pasado = True
             recorrido_tras = longitud(delante)
         if pasado and longitud(delante) - recorrido_tras >= despues_m:
             break
-        v = grafo.siguiente(v)
-        if v is None:
+        sig = grafo.continuar(v, k, adelante=True)
+        if sig is None or sig[0] in vistas:
             break
-        delante += grafo.vias[v][1:]
+        v, k = sig
+        vistas.add(v)
+        delante += grafo.vias[v][k + 1:]
+        k = len(grafo.vias[v]) - 1
     puntos = list(reversed(atras)) + delante
     return [[round(x, 6), round(y, 6)] for x, y in puntos]
 
