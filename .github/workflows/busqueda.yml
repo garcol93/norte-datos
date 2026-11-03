@@ -55,7 +55,7 @@ jobs:
           osmium export sitios.pbf -f geojsonseq --geometry-types=point,polygon -o sitios.geojsonseq
           osmium tags-filter iberia.osm.pbf nwr/addr:housenumber -o portales.pbf
           osmium export portales.pbf -f geojsonseq --geometry-types=point,polygon -o portales.geojsonseq
-          rm iberia.osm.pbf *.pbf
+          rm -f *.pbf
           ls -la
 
       - name: Índice
