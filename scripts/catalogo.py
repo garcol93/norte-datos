@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Genera catalogo.json a partir de las releases publicadas en este repo.
+
+La app de Norte descarga este catálogo (URL fija) para saber qué mapas y
+radares hay, su versión y su tamaño.
+
+Uso (en GitHub Actions): python3 scripts/catalogo.py --salida build/catalogo.json
+Necesita GITHUB_TOKEN y GITHUB_REPOSITORY en el entorno.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import urllib.request
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parent
+
+
+def api(ruta: str):
+    url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/{ruta}"
+    peticion = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+        "Accept": "application/vnd.github+json",
+    })
+    with urllib.request.urlopen(peticion, timeout=60) as r:
+        return json.load(r)
+
+
+def main() -> None:
+    args = argparse.ArgumentParser()
+    args.add_argument("--salida", type=Path, required=True)
+    opciones = args.parse_args()
+
+    nombres = {r["id"]: r["nombre"] for r in json.loads((RAIZ / "regiones.json").read_text())["regiones"]}
+    releases = api("releases?per_page=100")
+
+    # Para cada región, el archivo de la release de mapas más reciente que lo tenga
+    mapas: dict[str, dict] = {}
+    for rel in sorted((r for r in releases if r["tag_name"].startswith("mapas-")),
+                      key=lambda r: r["tag_name"], reverse=True):
+        version = rel["tag_name"].removeprefix("mapas-")
+        for asset in rel["assets"]:
+            if not asset["name"].endswith(".pmtiles"):
+                continue
+            ident = asset["name"].removesuffix(".pmtiles")
+            if ident in mapas:
+                continue
+            mapas[ident] = {
+                "id": ident,
+                "nombre": nombres.get(ident, ident),
+                "archivo": asset["name"],
+                "url": asset["browser_download_url"],
+                "bytes": asset["size"],
+                "version": version,
+            }
+
+    radares = []
+    for rel in releases:
+        if rel["tag_name"] != "radares":
+            continue
+        for asset in rel["assets"]:
+            if asset["name"].endswith(".geojson"):
+                radares.append({
+                    "id": asset["name"].removesuffix(".geojson"),
+                    "url": asset["browser_download_url"],
+                    "bytes": asset["size"],
+                    "version": asset["updated_at"],
+                })
+
+    orden = list(nombres)
+    catalogo = {
+        "formato": 1,
+        "generado": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        "atribucion": "© OpenStreetMap contributors; radares: DGT (nap.dgt.es)",
+        "mapas": sorted(mapas.values(), key=lambda m: orden.index(m["id"]) if m["id"] in orden else 99),
+        "radares": radares,
+    }
+    opciones.salida.parent.mkdir(parents=True, exist_ok=True)
+    opciones.salida.write_text(json.dumps(catalogo, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"catálogo: {len(mapas)} mapas, {len(radares)} archivos de radares")
+
+
+if __name__ == "__main__":
+    main()

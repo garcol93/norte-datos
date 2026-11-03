@@ -8,5 +8,10 @@ Datos abiertos para **Norte** (navegación offline para radios de coche Android)
 
 ## Scripts
 - `scripts/radares_dgt.py`: convierte el inventario DATEX II de la DGT a GeoJSON.
+- `scripts/catalogo.py`: genera `catalogo.json` (lo que consulta la app) a partir de las releases.
+- `scripts/regiones.json`: regiones de mapa descargables.
+- `.github/workflows/datos.yml`: radares cada lunes y mapas el día 2 de cada mes (también a mano).
+
+El catálogo está siempre en: https://github.com/garcol93/norte-datos/releases/download/catalogo/catalogo.json
 
 Pruebas: `python3 -m unittest discover -s tests`

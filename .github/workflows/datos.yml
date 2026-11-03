@@ -1,0 +1,119 @@
+name: Generar datos
+
+# Radares cada lunes; mapas el día 2 de cada mes. También a mano desde la
+# pestaña Actions («Run workflow»), eligiendo qué generar.
+on:
+  schedule:
+    - cron: "17 3 * * 1"   # radares
+    - cron: "23 4 2 * *"   # mapas
+  workflow_dispatch:
+    inputs:
+      que:
+        description: "Qué generar"
+        type: choice
+        options: [radares, mapas, todo]
+        default: radares
+      regiones:
+        description: "Mapas: ids separados por comas (vacío = todos los de regiones.json)"
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: datos
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  radares:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '17 3 * * 1') ||
+      (github.event_name == 'workflow_dispatch' && inputs.que != 'mapas')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pruebas
+        run: python3 -m unittest discover -s tests -v
+      - name: Radares DGT
+        run: python3 scripts/radares_dgt.py --salida build/dgt.geojson
+      - name: Publicar radares
+        run: |
+          gh release view radares >/dev/null 2>&1 || gh release create radares \
+            --title "Radares" --notes "Radares fijos y de tramo para Norte. Se actualizan cada semana."
+          gh release upload radares build/dgt.geojson --clobber
+      - name: Catálogo
+        run: |
+          python3 scripts/catalogo.py --salida build/catalogo.json
+          gh release view catalogo >/dev/null 2>&1 || gh release create catalogo \
+            --title "Catálogo" --notes "Índice de mapas y radares que consulta la app Norte."
+          gh release upload catalogo build/catalogo.json --clobber
+
+  mapas:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '23 4 2 * *') ||
+      (github.event_name == 'workflow_dispatch' && inputs.que != 'radares')
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Instalar pmtiles
+        run: |
+          go install github.com/protomaps/go-pmtiles@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Buscar el último mapa mundial de Protomaps
+        id: build
+        run: |
+          for i in $(seq 0 10); do
+            fecha=$(date -u -d "-$i day" +%Y%m%d)
+            if curl -sfI "https://build.protomaps.com/$fecha.pmtiles" >/dev/null; then
+              echo "fecha=$fecha" >> "$GITHUB_OUTPUT"
+              echo "Usando build $fecha"
+              exit 0
+            fi
+          done
+          echo "::error::No se encontró ningún build reciente de Protomaps"
+          exit 1
+      - name: Extraer y publicar regiones
+        env:
+          FECHA: ${{ steps.build.outputs.fecha }}
+          REGIONES: ${{ inputs.regiones }}
+        run: |
+          etiqueta="mapas-$FECHA"
+          gh release view "$etiqueta" >/dev/null 2>&1 || gh release create "$etiqueta" \
+            --title "Mapas $FECHA" --notes "Mapas por región (zoom máximo 14) del build $FECHA de Protomaps. © OpenStreetMap contributors."
+          python3 - <<'PY' > regiones.txt
+          import json, os
+          pedidas = [r.strip() for r in os.environ.get("REGIONES", "").split(",") if r.strip()]
+          for r in json.load(open("scripts/regiones.json"))["regiones"]:
+              if not pedidas or r["id"] in pedidas:
+                  print(r["id"], ",".join(str(x) for x in r["bbox"]))
+          PY
+          limite=$((2 * 1024 * 1024 * 1024 - 1))
+          while read -r id bbox; do
+            echo "::group::$id ($bbox)"
+            go-pmtiles extract "https://build.protomaps.com/$FECHA.pmtiles" "$id.pmtiles" \
+              --bbox="$bbox" --maxzoom=14 </dev/null
+            tam=$(stat -c %s "$id.pmtiles")
+            echo "$id: $tam bytes"
+            if [ "$tam" -gt "$limite" ]; then
+              echo "::error::$id ocupa $tam bytes, más de 2 GiB: hay que dividir la región en regiones.json"
+              exit 1
+            fi
+            gh release upload "$etiqueta" "$id.pmtiles" --clobber </dev/null
+            rm "$id.pmtiles"
+            echo "::endgroup::"
+          done < regiones.txt
+      - name: Catálogo
+        run: |
+          python3 scripts/catalogo.py --salida build/catalogo.json
+          gh release view catalogo >/dev/null 2>&1 || gh release create catalogo \
+            --title "Catálogo" --notes "Índice de mapas y radares que consulta la app Norte."
+          gh release upload catalogo build/catalogo.json --clobber

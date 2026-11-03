@@ -1,0 +1,11 @@
+{
+  "_nota": "Recuadros (oeste, sur, este, norte) de cada mapa descargable. Ningún archivo puede pasar de 2 GiB (límite de GitHub Releases).",
+  "regiones": [
+    {"id": "es", "nombre": "España (península y Baleares)", "bbox": [-9.6, 35.9, 4.4, 43.9]},
+    {"id": "ic", "nombre": "Canarias", "bbox": [-18.3, 27.5, -13.3, 29.5]},
+    {"id": "pt", "nombre": "Portugal", "bbox": [-9.6, 36.9, -6.15, 42.2]},
+    {"id": "ad", "nombre": "Andorra", "bbox": [1.38, 42.40, 1.80, 42.67]},
+    {"id": "fr-s", "nombre": "Francia (sur)", "bbox": [-2.0, 41.3, 7.8, 46.5]},
+    {"id": "fr-n", "nombre": "Francia (norte)", "bbox": [-5.3, 46.5, 8.3, 51.2]}
+  ]
+}
