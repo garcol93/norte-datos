@@ -1,0 +1,96 @@
+name: Generar búsqueda
+
+# Índice de búsqueda sin internet (pueblos, calles, sitios y portales) para la
+# Península Ibérica. El día 4 de cada mes, o a mano desde Actions.
+on:
+  schedule:
+    - cron: "47 3 4 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: busqueda
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  iberia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Herramientas
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+
+      - name: Pruebas
+        run: python3 -m unittest tests.test_busqueda -v
+
+      - name: Datos de OpenStreetMap (España, Portugal y Andorra)
+        run: |
+          mkdir -p datos
+          for r in spain portugal andorra; do
+            curl -sfL --retry 3 -o "datos/$r.osm.pbf" "https://download.geofabrik.de/europe/$r-latest.osm.pbf"
+          done
+          osmium merge datos/spain.osm.pbf datos/portugal.osm.pbf datos/andorra.osm.pbf -o datos/iberia.osm.pbf
+          rm datos/spain.osm.pbf datos/portugal.osm.pbf datos/andorra.osm.pbf
+
+      - name: Extraer poblaciones, calles, sitios y portales
+        run: |
+          cd datos
+          osmium tags-filter iberia.osm.pbf n/place=city,town,village,suburb,neighbourhood,hamlet,locality -o pob.pbf
+          osmium export pob.pbf -f geojsonseq --geometry-types=point -o poblaciones.geojsonseq
+          osmium tags-filter iberia.osm.pbf \
+            w/highway=motorway,trunk,primary,secondary,tertiary,unclassified,residential,living_street,pedestrian -o vias.pbf
+          osmium tags-filter vias.pbf w/name -o calles.pbf
+          osmium export calles.pbf -f geojsonseq --geometry-types=linestring -o calles.geojsonseq
+          osmium tags-filter iberia.osm.pbf \
+            nwr/amenity=fuel,charging_station,hospital,clinic,pharmacy,parking,restaurant,cafe,police,townhall,university,school \
+            nwr/shop=supermarket,mall nwr/tourism=hotel,camp_site nwr/railway=station nwr/aeroway=aerodrome \
+            nwr/highway=rest_area,services -o sitios.pbf
+          osmium export sitios.pbf -f geojsonseq --geometry-types=point,polygon -o sitios.geojsonseq
+          osmium tags-filter iberia.osm.pbf nwr/addr:housenumber -o portales.pbf
+          osmium export portales.pbf -f geojsonseq --geometry-types=point,polygon -o portales.geojsonseq
+          rm iberia.osm.pbf *.pbf
+          ls -la
+
+      - name: Índice
+        run: |
+          fecha=$(date -u +%Y%m%d)
+          python3 scripts/busqueda.py --version "$fecha" \
+            --poblaciones datos/poblaciones.geojsonseq --calles datos/calles.geojsonseq \
+            --sitios datos/sitios.geojsonseq --portales datos/portales.geojsonseq \
+            --salida build/iberia.busqueda.sqlite
+          ls -la build
+
+      - name: Prueba de búsqueda
+        run: |
+          python3 - <<'PY'
+          import sqlite3
+          db = sqlite3.connect("build/iberia.busqueda.sqlite")
+          for q in ("mayor valladolid", "alcala madrid", "repsol", "lisboa", "sagrada familia"):
+              r = db.execute("SELECT l.nombre, l.municipio, l.detalle FROM buscar b JOIN lugares l ON l.id = b.docid "
+                             "WHERE buscar MATCH ? ORDER BY l.tipo, l.peso LIMIT 3", (q,)).fetchall()
+              print(q, "→", r)
+          print(dict(db.execute("SELECT clave, valor FROM info")))
+          PY
+
+      - name: Publicar
+        run: |
+          fecha=$(date -u +%Y%m%d)
+          etiqueta="busqueda-$fecha"
+          gh release view "$etiqueta" >/dev/null 2>&1 || gh release create "$etiqueta" \
+            --title "Búsqueda $fecha" \
+            --notes "Índice de búsqueda sin internet (Península Ibérica): poblaciones, calles, sitios y portales. © OpenStreetMap contributors."
+          gh release upload "$etiqueta" build/iberia.busqueda.sqlite --clobber
+
+      - name: Catálogo
+        run: |
+          python3 scripts/catalogo.py --salida build/catalogo.json
+          gh release view catalogo >/dev/null 2>&1 || gh release create catalogo \
+            --title "Catálogo" --notes "Índice de mapas y radares que consulta la app Norte."
+          gh release upload catalogo build/catalogo.json --clobber

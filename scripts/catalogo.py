@@ -97,6 +97,25 @@ def main() -> None:
                 "partes": partes,
             }
 
+    # Índices de búsqueda sin internet: el más reciente de cada región
+    busqueda: dict[str, dict] = {}
+    for rel in sorted((r for r in releases if r["tag_name"].startswith("busqueda-")),
+                      key=lambda r: r["tag_name"], reverse=True):
+        for asset in rel["assets"]:
+            if not asset["name"].endswith(".busqueda.sqlite"):
+                continue
+            ident = asset["name"].removesuffix(".busqueda.sqlite")
+            if ident in busqueda:
+                continue
+            busqueda[ident] = {
+                "id": ident,
+                "nombre": "Península Ibérica (España, Portugal y Andorra)" if ident == "iberia" else ident,
+                "archivo": asset["name"],
+                "url": asset["browser_download_url"],
+                "bytes": asset["size"],
+                "version": rel["tag_name"].removeprefix("busqueda-"),
+            }
+
     orden = list(nombres)
     catalogo = {
         "formato": 1,
@@ -105,6 +124,7 @@ def main() -> None:
         "mapas": sorted(mapas.values(), key=lambda m: orden.index(m["id"]) if m["id"] in orden else 99),
         "radares": radares,
         "rutas": list(rutas.values()),
+        "busqueda": list(busqueda.values()),
     }
     opciones.salida.parent.mkdir(parents=True, exist_ok=True)
     opciones.salida.write_text(json.dumps(catalogo, ensure_ascii=False, indent=1), encoding="utf-8")
