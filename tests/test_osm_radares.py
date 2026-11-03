@@ -72,6 +72,42 @@ class LimitesTest(unittest.TestCase):
         self.assertEqual(estad["sin_limite"], 1)
 
 
+class RumboTest(unittest.TestCase):
+    def test_autovia_de_un_sentido(self):
+        vias = secuencia([via([[-3.71, 40.0001], [-3.69, 40.0001]], highway="motorway", maxspeed="120")])
+        radares = [radar_fijo(-3.7, 40.0)]
+        asignar_limites(radares, vias)
+        p = radares[0]["properties"]
+        self.assertAlmostEqual(p["rumbo"], 90, delta=1)
+        self.assertFalse(p["doble_sentido"])
+
+    def test_oneway_al_reves(self):
+        vias = secuencia([via([[-3.71, 40.0001], [-3.69, 40.0001]], highway="primary", oneway="-1")])
+        radares = [radar_fijo(-3.7, 40.0)]
+        asignar_limites(radares, vias)
+        self.assertAlmostEqual(radares[0]["properties"]["rumbo"], 270, delta=1)
+        self.assertFalse(radares[0]["properties"]["doble_sentido"])
+
+    def test_dos_calzadas_igual_de_cerca_es_dudoso(self):
+        # Calzada este a 10 m al norte y calzada oeste a 15 m al sur
+        vias = secuencia([
+            via([[-3.71, 40.00009], [-3.69, 40.00009]], highway="motorway"),
+            via([[-3.69, 39.99987], [-3.71, 39.99987]], highway="motorway"),
+        ])
+        radares = [radar_fijo(-3.7, 40.0)]
+        asignar_limites(radares, vias)
+        self.assertTrue(radares[0]["properties"]["doble_sentido"])
+
+    def test_carretera_de_doble_sentido(self):
+        vias = secuencia([via([[-3.7001, 39.99], [-3.7001, 40.01]], highway="secondary", maxspeed="90")])
+        radares = [radar_fijo(-3.7, 40.0)]
+        asignar_limites(radares, vias)
+        p = radares[0]["properties"]
+        self.assertAlmostEqual(p["rumbo"], 0, delta=1)
+        self.assertTrue(p["doble_sentido"])
+        self.assertEqual(p["limite"], 90)
+
+
 class ZonasTest(unittest.TestCase):
     zona = {"type": "Feature", "properties": {"id": "cataluna"},
             "geometry": {"type": "Polygon", "coordinates": [[[0, 40], [3, 40], [3, 43], [0, 43], [0, 40]]]}}

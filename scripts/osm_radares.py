@@ -107,8 +107,42 @@ def leer_secuencia(ruta: Path):
                 yield json.loads(linea)
 
 
+def rumbo_segmento(a, b) -> float:
+    """Rumbo en grados (0 = norte, 90 = este) del tramo a → b."""
+    lat0 = math.radians((a[1] + b[1]) / 2)
+    dx = (b[0] - a[0]) * math.cos(lat0)
+    dy = b[1] - a[1]
+    return math.degrees(math.atan2(dx, dy)) % 360
+
+
+def diferencia_angulo(x: float, y: float) -> float:
+    d = abs(x - y) % 360
+    return 360 - d if d > 180 else d
+
+
+def sentido_unico(tags: dict) -> int:
+    """1 si se circula en el sentido del trazado, -1 al revés, 0 si es doble sentido."""
+    oneway = (tags.get("oneway") or "").lower()
+    if oneway in ("yes", "true", "1"):
+        return 1
+    if oneway == "-1":
+        return -1
+    if oneway == "no":
+        return 0
+    if tags.get("highway") in ("motorway", "motorway_link") or tags.get("junction") in ("roundabout", "circular"):
+        return 1
+    return 0
+
+
 def asignar_limites(radares: list[dict], vias: Path) -> dict:
-    """Busca la vía más cercana a cada punto de radar. Devuelve estadísticas."""
+    """Busca la vía más cercana a cada punto de radar: límite y dirección.
+
+    Añade a cada radar `limite` (exacto, de maxspeed), `limite_aprox`
+    (genérico por tipo de vía) y `rumbo` + `doble_sentido`: la dirección de la
+    vía en el radar, para que la app descarte radares de la otra calzada.
+    Si hay dos calzadas de sentido contrario igual de cerca, el sentido es
+    dudoso y se marca como doble sentido (solo se comprueba el eje de la vía).
+    """
     # Índice de puntos de radar por celda
     indice: dict[tuple[int, int], list[tuple[int, int]]] = {}
     for i, r in enumerate(radares):
@@ -116,13 +150,13 @@ def asignar_limites(radares: list[dict], vias: Path) -> dict:
             indice.setdefault(celda(*p), []).append((i, j))
     margen = DISTANCIA_MAXIMA_M / 100_000  # en grados, con holgura
 
-    mejor: dict[tuple[int, int], tuple[float, dict]] = {}
-    for via in leer_secuencia(vias):
+    # Para cada punto: el mejor tramo de cada vía cercana (distancia, tags, rumbo)
+    candidatos: dict[tuple[int, int], dict[int, tuple[float, dict, float]]] = {}
+    for n, via in enumerate(leer_secuencia(vias)):
         g = via.get("geometry") or {}
         if g.get("type") != "LineString":
             continue
         coords = g["coordinates"]
-        tags = None
         # Cada tramo de la vía: celdas de su recuadro ampliado (los tramos
         # rectos de autovía pueden medir kilómetros entre vértices)
         for a, b in zip(coords, coords[1:]):
@@ -135,25 +169,62 @@ def asignar_limites(radares: list[dict], vias: Path) -> dict:
                     for (i, j) in indice.get((cx, cy), ()):
                         p = puntos_de_radar(radares[i])[j]
                         d = distancia_a_segmento(p, a, b)
-                        if d <= DISTANCIA_MAXIMA_M and ((i, j) not in mejor or d < mejor[(i, j)][0]):
-                            tags = tags if tags is not None else (via.get("properties") or {})
-                            mejor[(i, j)] = (d, tags)
+                        if d > DISTANCIA_MAXIMA_M:
+                            continue
+                        delpunto = candidatos.setdefault((i, j), {})
+                        if n not in delpunto or d < delpunto[n][0]:
+                            delpunto[n] = (d, via.get("properties") or {}, rumbo_segmento(a, b))
 
-    exactos = aproximados = 0
+    exactos = aproximados = con_rumbo = 0
     for i, r in enumerate(radares):
         props = r["properties"]
+        direccion = props.pop("direccion_osm", None)
         # Para tramos manda el inicio; si no hay vía allí, el fin
-        tags = next((mejor[(i, j)][1] for j in range(2) if (i, j) in mejor), None)
-        limite, exacto = limite_de_via(tags) if tags else (None, False)
-        props["limite"] = limite if exacto else None
-        props["limite_aprox"] = None if exacto else limite
-        if tags and tags.get("highway"):
+        punto = next((candidatos[(i, j)] for j in range(2) if candidatos.get((i, j))), None)
+        if not punto:
+            props.setdefault("limite", None)
+            props["limite_aprox"] = None
+            props["rumbo"] = round(direccion, 1) if direccion is not None else None
+            props["doble_sentido"] = direccion is None
+            continue
+        lista = sorted(punto.values(), key=lambda c: c[0])
+        d0, tags, rumbo = lista[0]
+        limite, exacto = limite_de_via(tags)
+        if props.get("fuente") == "osm" and props.get("limite"):
+            pass  # el propio radar de OSM ya trae su límite
+        else:
+            props["limite"] = limite if exacto else None
+            props["limite_aprox"] = None if exacto else limite
+        if tags.get("highway"):
             props["tipo_osm"] = tags["highway"]
-        if exacto:
+
+        sentido = sentido_unico(tags)
+        if sentido == -1:
+            rumbo = (rumbo + 180) % 360
+        # ¿Otra calzada en sentido contrario casi igual de cerca?
+        ambigua = any(
+            d <= d0 + 25 and sentido_unico(t) != 0 and diferencia_angulo(
+                (rb + 180) % 360 if sentido_unico(t) == -1 else rb, rumbo) > 135
+            for d, t, rb in lista[1:]
+        )
+        if direccion is not None:
+            props["rumbo"] = round(direccion, 1)
+            props["doble_sentido"] = False
+        else:
+            props["rumbo"] = round(rumbo, 1)
+            props["doble_sentido"] = sentido == 0 or ambigua
+        con_rumbo += 1
+        if props.get("limite"):
             exactos += 1
-        elif limite:
+        elif props.get("limite_aprox"):
             aproximados += 1
-    return {"exactos": exactos, "aproximados": aproximados, "sin_limite": len(radares) - exactos - aproximados}
+    return {
+        "exactos": exactos,
+        "aproximados": aproximados,
+        "sin_limite": len(radares) - exactos - aproximados,
+        "con_rumbo": con_rumbo,
+        "sentido_unico": sum(1 for r in radares if r["properties"].get("doble_sentido") is False),
+    }
 
 
 def dentro(poligono: list, lon: float, lat: float) -> bool:
@@ -214,6 +285,10 @@ def radares_osm(camaras: Path, zonas: list[dict]) -> list[dict]:
             continue  # fuera de Cataluña y País Vasco ya avisa la DGT
         tags = f.get("properties") or {}
         ident = tags.get("@id") or f.get("id") or f"{lon:.5f},{lat:.5f}"
+        try:
+            direccion = float(tags.get("direction", "")) % 360
+        except ValueError:
+            direccion = None
         salida.append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [round(lon, 6), round(lat, 6)]},
@@ -225,6 +300,7 @@ def radares_osm(camaras: Path, zonas: list[dict]) -> list[dict]:
                 "limite_aprox": None,
                 "carretera": tags.get("ref"),
                 "zona": zona,
+                "direccion_osm": direccion,
             },
         })
     return salida
@@ -247,15 +323,17 @@ def main() -> None:
     o = a.parse_args()
 
     dgt = json.loads(o.dgt.read_text(encoding="utf-8"))
-    estad = asignar_limites(dgt["features"], o.vias)
-    dgt["metadata"]["limites"] = "OSM maxspeed (exacto) o genérico por tipo de vía (aprox.)"
-    escribir(o.dgt, dgt)
-    print(f"límites DGT: {estad}", file=sys.stderr)
-
     zonas = leer_comunidades(o.comunidades, o.tolerancia)
     escribir(o.salida_zonas, {"type": "FeatureCollection", "features": zonas})
-
     osm = radares_osm(o.camaras, zonas)
+
+    # Un solo recorrido del archivo de vías (es grande) para todos los radares
+    estad = asignar_limites(dgt["features"] + osm, o.vias)
+    dgt["metadata"]["limites"] = "OSM maxspeed (exacto) o genérico por tipo de vía (aprox.)"
+    dgt["metadata"]["rumbo"] = "dirección de la vía OSM en el radar; doble_sentido si no se sabe el sentido"
+    escribir(o.dgt, dgt)
+    print(f"límites y rumbos: {estad}", file=sys.stderr)
+
     escribir(o.salida_osm, {
         "type": "FeatureCollection",
         "metadata": {"fuente": "© OpenStreetMap contributors (highway=speed_camera)"},
