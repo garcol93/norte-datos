@@ -202,7 +202,8 @@ def main() -> None:
         if not p or not tipo:
             continue
         if not nombre:
-            if tipo not in ("Gasolinera", "Punto de recarga", "Farmacia", "Área de servicio"):
+            # Sin nombre solo entran los sitios que sirven igual sin él (casi ningún área de descanso tiene nombre)
+            if tipo not in ("Gasolinera", "Punto de recarga", "Farmacia", "Área de servicio", "Área de descanso"):
                 continue
             nombre = tipo
         filas.append((SITIO, 20, nombre, municipios.cercano(p[0], p[1]), tipo, p[1], p[0]))

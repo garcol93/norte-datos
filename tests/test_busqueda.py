@@ -45,6 +45,7 @@ class BusquedaTest(unittest.TestCase):
                 punto(-4.73, 41.65, amenity="fuel", brand="Repsol"),
                 punto(-4.72, 41.66, amenity="fuel"),
                 punto(-3.70, 40.42, shop="supermarket", name="Mercadona"),
+                punto(-4.70, 41.70, highway="rest_area"),
             ]),
             "--portales", seq([punto(-4.7238, 41.6522, **{"addr:street": "Calle Mayor", "addr:housenumber": "12"})]),
             "--salida", str(salida),
@@ -80,6 +81,10 @@ class BusquedaTest(unittest.TestCase):
         self.assertEqual(self.db.execute(consulta, args).fetchall(), [("Gasolinera",), ("Repsol",)])
         plan = " ".join(str(f) for f in self.db.execute("EXPLAIN QUERY PLAN " + consulta, args).fetchall())
         self.assertIn("sitios_categoria", plan)
+
+    def test_area_de_descanso_sin_nombre(self):
+        r = self.db.execute("SELECT nombre FROM lugares WHERE tipo = 2 AND detalle = 'Área de descanso'").fetchall()
+        self.assertEqual(r, [("Área de descanso",)])
 
 
 if __name__ == "__main__":
