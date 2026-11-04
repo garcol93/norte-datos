@@ -17,7 +17,7 @@ jobs:
       - name: Datos de rutas
         run: |
           mkdir -p datos && cd datos
-          etiqueta=$(gh release list -R "$GITHUB_REPOSITORY" --limit 50 | awk '{print $1}' | grep '^rutas-' | sort | tail -1)
+          etiqueta=$(gh release list -R "$GITHUB_REPOSITORY" --limit 50 --json tagName -q '.[].tagName' | grep '^rutas-' | sort | tail -1)
           echo "release: $etiqueta"
           gh release download "$etiqueta" -R "$GITHUB_REPOSITORY" -p 'iberia.tar.parte*'
           cat iberia.tar.parte* > rutas.tar && rm iberia.tar.parte*
@@ -34,7 +34,32 @@ jobs:
           L='"locations":[{"lat":40.4352,"lon":-3.7191},{"lat":40.4925,"lon":-3.8730}],"costing":"auto","language":"es-ES"'
           valhalla_service valhalla.json route "{$L}" > nativo.json
           valhalla_service valhalla.json route "{$L,\"format\":\"osrm\",\"banner_instructions\":true}" > osrm.json
+          # Límite de la vía donde está el coche: 10 puntos de la ruta, como si fueran del GPS
+          python3 /datos/forma.py > forma.json
+          valhalla_service valhalla.json trace_attributes "$(cat forma.json)" > atributos.json
           SH
+          cat > datos/forma.py <<'PY'
+          import json
+          def decodificar(s, p=6):
+              i = lat = lon = 0; r = []
+              while i < len(s):
+                  for k in (0, 1):
+                      res = sh = 0
+                      while True:
+                          b = ord(s[i]) - 63; i += 1; res |= (b & 0x1f) << sh; sh += 5
+                          if b < 0x20: break
+                      d = ~(res >> 1) if res & 1 else res >> 1
+                      if k == 0: lat += d
+                      else: lon += d
+                  r.append((lat / 10**p, lon / 10**p))
+              return r
+          n = json.load(open("/datos/nativo.json"))
+          pts = decodificar(n["trip"]["legs"][0]["shape"])
+          mitad = len(pts) // 2
+          muestra = pts[mitad:mitad + 40:4]
+          print(json.dumps({"shape": [{"lat": a, "lon": b} for a, b in muestra], "costing": "auto", "shape_match": "map_snap",
+                            "filters": {"attributes": ["edge.speed_limit", "edge.names", "edge.road_class", "edge.lane_count", "edge.length"], "action": "include"}}))
+          PY
           docker run --rm -v "$PWD/datos:/datos" "$VALHALLA" bash /datos/consulta.sh
           python3 - <<'PY'
           import json, collections
@@ -57,4 +82,6 @@ jobs:
           print("OSRM: pasos", len(pasos), "cruces con carriles", con)
           b = next((s.get("bannerInstructions") for s in pasos if s.get("bannerInstructions")), None)
           print("banner de ejemplo:", json.dumps(b, ensure_ascii=False)[:1200])
+          a = json.load(open("datos/atributos.json"))
+          print("ATRIBUTOS:", json.dumps(a.get("edges", a), ensure_ascii=False)[:1500])
           PY
