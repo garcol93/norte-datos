@@ -5,6 +5,9 @@ name: Sondeo de fuentes
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   medir:
     runs-on: ubuntu-latest
@@ -33,3 +36,17 @@ jobs:
           echo "== SCT GML (muestra)"; python3 -c "import re;t=open('sct-gml.xml',encoding='utf-8',errors='replace').read();print(t[:200]);m=re.findall(r'<[^>]*incidencia[^>]*>.*?</[^>]*incidencia[^>]*>',t,re.S);print(len(m));print(m[0][:2500] if m else t[200:3200])"
           echo "== SCT RSS (muestra)"; head -c 2500 sct-rss.xml; echo
           echo "== Euskadi (muestra)"; python3 -c "import json;d=json.load(open('euskadi-api.json'));print({k:(v if not isinstance(v,list) else len(v)) for k,v in d.items()});l=d.get('incidences') or [];print(json.dumps(l[:2],ensure_ascii=False)[:2500])"
+
+      - name: Publicar muestras
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          hoy=$(date -u +%Y/%m/%d)
+          curl -sL --compressed -m 90 -o euskadi-hoy.json "https://api.euskadi.eus/traffic/v1.0/incidences/byDate/$hoy"
+          echo "Euskadi hoy: $(stat -c %s euskadi-hoy.json) bytes"; head -c 400 euskadi-hoy.json; echo
+          curl -sL --compressed -m 90 -o sct-datex.xml "https://nap.dgt.es/datex2/sct/SituationPublication/all/content.xml"
+          echo "SCT DATEX: $(stat -c %s sct-datex.xml) bytes"; head -c 300 sct-datex.xml; echo
+          curl -sL --compressed -m 90 -o dtgv-datex.xml "https://nap.dgt.es/datex2/dt-gv/SituationPublication/all/content.xml"
+          echo "DT-GV DATEX: $(stat -c %s dtgv-datex.xml) bytes"; head -c 300 dtgv-datex.xml; echo
+          gh release upload sondeo sct-gml.xml euskadi-hoy.json sct-datex.xml dtgv-datex.xml -R "$GITHUB_REPOSITORY" --clobber
