@@ -1,0 +1,60 @@
+name: Sondeo de carriles
+
+# Comprueba si Valhalla (el mismo motor que la app) da información de
+# carriles en el formato propio o en el de OSRM. No publica nada.
+on:
+  workflow_dispatch:
+
+env:
+  VALHALLA: ghcr.io/valhalla/valhalla:3.9.0
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  carriles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Datos de rutas
+        run: |
+          mkdir -p datos && cd datos
+          etiqueta=$(gh release list -R "$GITHUB_REPOSITORY" --limit 50 | awk '{print $1}' | grep '^rutas-' | sort | tail -1)
+          echo "release: $etiqueta"
+          gh release download "$etiqueta" -R "$GITHUB_REPOSITORY" -p 'iberia.tar.parte*'
+          cat iberia.tar.parte* > rutas.tar && rm iberia.tar.parte*
+          ls -la
+
+      - name: Rutas con carriles
+        run: |
+          docker pull -q "$VALHALLA"
+          cat > datos/consulta.sh <<'SH'
+          set -e
+          cd /datos
+          valhalla_build_config --mjolnir-tile-extract /datos/rutas.tar > valhalla.json
+          # Moncloa → Las Rozas por la A-6 (salidas con varios carriles) y entrada a la M-40
+          L='"locations":[{"lat":40.4352,"lon":-3.7191},{"lat":40.4925,"lon":-3.8730}],"costing":"auto","language":"es-ES"'
+          valhalla_service valhalla.json route "{$L}" > nativo.json
+          valhalla_service valhalla.json route "{$L,\"format\":\"osrm\",\"banner_instructions\":true}" > osrm.json
+          SH
+          docker run --rm -v "$PWD/datos:/datos" "$VALHALLA" bash /datos/consulta.sh
+          python3 - <<'PY'
+          import json, collections
+          n = json.load(open("datos/nativo.json"))
+          claves = collections.Counter()
+          for leg in n["trip"]["legs"]:
+              for m in leg["maneuvers"]:
+                  claves.update(m.keys())
+          print("NATIVO, campos de las maniobras:", dict(claves))
+          o = json.load(open("datos/osrm.json"))
+          r = o["routes"][0]
+          pasos = [s for leg in r["legs"] for s in leg["steps"]]
+          con = 0
+          for s in pasos:
+              for it in s.get("intersections", []):
+                  if it.get("lanes"):
+                      con += 1
+                      if con <= 6:
+                          print("carriles:", s["maneuver"].get("type"), s["maneuver"].get("modifier"), s.get("name"), json.dumps(it["lanes"]))
+          print("OSRM: pasos", len(pasos), "cruces con carriles", con)
+          b = next((s.get("bannerInstructions") for s in pasos if s.get("bannerInstructions")), None)
+          print("banner de ejemplo:", json.dumps(b, ensure_ascii=False)[:1200])
+          PY
