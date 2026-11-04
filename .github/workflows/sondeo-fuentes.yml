@@ -1,0 +1,42 @@
+name: Sondeo de fuentes
+
+# Mide fuentes de datos nuevas (precios de carburantes, incidencias de
+# Cataluña y País Vasco) para decidir cómo llevarlas a la app. No publica nada.
+on:
+  workflow_dispatch:
+
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Medir
+        run: |
+          set +e
+          medir() { # nombre url [cabeceras]
+            local n="$1" u="$2"; shift 2
+            curl -sL --compressed -m 90 -o "$n" -w "== $n → HTTP %{http_code} · %{content_type} · %{size_download} bytes\n" "$@" "$u"
+            [ -s "$n" ] || return
+            echo "   gzip: $(gzip -9c "$n" | wc -c) bytes"
+            head -c 1500 "$n" | tr '\n' ' ' | cut -c1-1500; echo; echo
+          }
+          medir precios.json "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/" -H "Accept: application/json"
+          python3 - <<'PY'
+          import json
+          try:
+              d = json.load(open("precios.json", encoding="utf-8-sig"))
+              l = d.get("ListaEESSPrecio", [])
+              print("estaciones:", len(l), "fecha:", d.get("Fecha"), "nota:", d.get("Nota"))
+              print("campos:", list(l[0].keys()) if l else None)
+              print("ejemplo:", json.dumps(l[0], ensure_ascii=False)[:900] if l else None)
+          except Exception as e:
+              print("no se pudo leer precios:", e)
+          PY
+          medir sct-gml.xml "https://www.gencat.cat/transit/opendata/incidenciesGML.xml"
+          medir sct-rss.xml "https://www.gencat.cat/transit/opendata/incidenciesRSS.xml"
+          medir sct-nap.xml "https://nap.dgt.es/datex2/v3/sct/SituationPublication/datex2_v37.xml"
+          medir sct-infocar.xml "https://infocar.dgt.es/datex2/sct/SituationPublication/all/content.xml"
+          medir euskadi-api.json "https://api.euskadi.eus/traffic/v1.0/incidences?_page=1"
+          medir euskadi-nap.xml "https://nap.dgt.es/datex2/v3/dt-gv/SituationPublication/datex2_v37.xml"
+          medir nap-catalogo.html "https://nap.dgt.es/es/dataset?q=incidencias"
+          grep -oE 'href="/es/dataset/[a-z0-9-]+"' nap-catalogo.html | sort -u | head -40
