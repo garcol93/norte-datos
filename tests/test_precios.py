@@ -20,11 +20,15 @@ class PreciosTest(unittest.TestCase):
         ]}
         d = Path(tempfile.mkdtemp())
         (d / "e.json").write_text(json.dumps(datos), encoding="utf-8")
-        subprocess.run([sys.executable, str(RAIZ / "scripts" / "precios.py"), str(d / "e.json"), str(d / "p.csv.gz")],
+        subprocess.run([sys.executable, str(RAIZ / "scripts" / "precios.py"), str(d / "e.json"), str(d / "salida")],
                        check=True, capture_output=True)
-        lineas = gzip.open(d / "p.csv.gz", "rt", encoding="utf-8").read().splitlines()
+        leer = lambda n: gzip.open(d / "salida" / n, "rt", encoding="utf-8").read().splitlines()
+        lineas = leer("precios.csv.gz")
         self.assertEqual(lineas[0], "#04/11/2026 12:50:38")
         self.assertEqual(lineas[1:], ["39.21142;-1.53917;Repsol;1699;1899;1839;;"])
+        # Un solo carburante: solo las que lo venden
+        self.assertEqual(leer("precios-diesel.csv.gz")[1:], ["39.21142;-1.53917;Repsol;1839"])
+        self.assertEqual(leer("precios-glp.csv.gz")[1:], [])
 
 
 if __name__ == "__main__":

@@ -28,9 +28,9 @@ jobs:
         run: |
           curl -sfL --retry 4 --retry-delay 20 -m 180 -H "Accept: application/json" \
             -o estaciones.json "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/"
-          python3 scripts/precios.py estaciones.json precios.csv.gz
+          python3 scripts/precios.py estaciones.json salida
       - name: Publicar
         run: |
           gh release view precios >/dev/null 2>&1 || \
             gh release create precios --title "Precios de carburantes" --notes "Precios del Ministerio, resumidos para Norte cada 3 horas."
-          gh release upload precios precios.csv.gz --clobber
+          gh release upload precios salida/*.csv.gz --clobber

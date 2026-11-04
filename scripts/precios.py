@@ -1,9 +1,12 @@
 """Resume los precios de carburantes del Ministerio para la app.
 
 Entrada: el JSON de «EstacionesTerrestres» (≈12 MB, todas las gasolineras de
-España). Salida: un CSV comprimido con lo justo (≈0,3 MB):
-  fecha en la primera línea («#04/11/2026 12:50:38»), y luego
-  lat;lon;rótulo;g95;g98;diesel;diesel_plus;glp
+España). Salida, en una carpeta:
+  precios.csv.gz con todos los carburantes (≈175 KB):
+    fecha en la primera línea («#04/11/2026 12:50:38»), y luego
+    lat;lon;rótulo;g95;g98;diesel;diesel_plus;glp
+  precios-<carburante>.csv.gz con uno solo (≈110 KB), para que la radio baje
+  solo el de su coche: lat;lon;rótulo;precio
 Los precios van en milésimas de euro (1489 = 1,489 €/l); vacío si no lo vende.
 """
 import argparse
@@ -52,16 +55,29 @@ def resumir(datos: dict) -> list[str]:
     return lineas
 
 
+def escribir(ruta: Path, lineas: list[str]) -> None:
+    with gzip.open(ruta, "wt", encoding="utf-8") as f:
+        f.write("\n".join(lineas) + "\n")
+    print(f"{ruta.name}: {len(lineas) - 1} gasolineras · {ruta.stat().st_size} bytes", file=sys.stderr)
+
+
 def main() -> None:
     a = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     a.add_argument("entrada", type=Path)
-    a.add_argument("salida", type=Path)
+    a.add_argument("salida", type=Path, help="carpeta de salida")
     o = a.parse_args()
     datos = json.loads(o.entrada.read_text(encoding="utf-8-sig"))
     lineas = resumir(datos)
-    with gzip.open(o.salida, "wt", encoding="utf-8") as f:
-        f.write("\n".join(lineas) + "\n")
-    print(f"gasolineras: {len(lineas) - 1} · {o.salida.stat().st_size} bytes", file=sys.stderr)
+    o.salida.mkdir(parents=True, exist_ok=True)
+    escribir(o.salida / "precios.csv.gz", lineas)
+    # Un archivo por carburante, solo con las gasolineras que lo venden
+    for i, clave in enumerate(CARBURANTES):
+        solo = [lineas[0]]
+        for l in lineas[1:]:
+            c = l.split(";")
+            if c[3 + i]:
+                solo.append(";".join(c[:3] + [c[3 + i]]))
+        escribir(o.salida / f"precios-{clave}.csv.gz", solo)
 
 
 if __name__ == "__main__":
