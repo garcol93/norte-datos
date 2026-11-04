@@ -1,0 +1,36 @@
+name: Incidencias de Cataluña y País Vasco
+
+# Cada 15 min resume las incidencias del SCT y del Gobierno Vasco (≈1 MB)
+# en un archivo de ≈10 KB para la radio. Release «incidencias».
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: incidencias-regionales
+  cancel-in-progress: true
+
+jobs:
+  regionales:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pruebas
+        run: python3 -m unittest tests.test_incidencias_regionales -v
+      - name: Descargar y resumir
+        run: |
+          curl -sfL --retry 3 -m 60 -o sct.xml "https://www.gencat.cat/transit/opendata/incidenciesGML.xml" || echo "::warning::Cataluña no responde"
+          curl -sfL --retry 3 -m 90 --compressed -o dtgv.xml "https://nap.dgt.es/datex2/dt-gv/SituationPublication/all/content.xml" || echo "::warning::País Vasco no responde"
+          python3 scripts/incidencias_regionales.py --sct sct.xml --dtgv dtgv.xml --salida regionales.json.gz
+      - name: Publicar
+        run: |
+          gh release view incidencias >/dev/null 2>&1 || \
+            gh release create incidencias --title "Incidencias regionales" --notes "Cataluña (SCT) y País Vasco (Gobierno Vasco), resumidas para Norte cada 15 min."
+          gh release upload incidencias regionales.json.gz --clobber
