@@ -49,8 +49,8 @@ jobs:
           osmium tags-filter vias.pbf w/name -o calles.pbf
           osmium export calles.pbf -f geojsonseq --geometry-types=linestring -o calles.geojsonseq
           osmium tags-filter iberia.osm.pbf \
-            nwr/amenity=fuel,charging_station,hospital,clinic,pharmacy,parking,restaurant,cafe,police,townhall,university,school \
-            nwr/shop=supermarket,mall nwr/tourism=hotel,camp_site nwr/railway=station nwr/aeroway=aerodrome \
+            nwr/amenity=fuel,charging_station,hospital,clinic,pharmacy,parking,restaurant,cafe,police,townhall,university,school,atm,car_wash \
+            nwr/shop=supermarket,mall,car_repair nwr/tourism=hotel,camp_site nwr/railway=station nwr/aeroway=aerodrome \
             nwr/highway=rest_area,services -o sitios.pbf
           osmium export sitios.pbf -f geojsonseq --geometry-types=point,polygon -o sitios.geojsonseq
           osmium tags-filter iberia.osm.pbf nwr/addr:housenumber -o portales.pbf

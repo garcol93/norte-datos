@@ -42,6 +42,9 @@ SITIOS = {
     ("amenity", "townhall"): "Ayuntamiento",
     ("amenity", "university"): "Universidad",
     ("amenity", "school"): "Colegio",
+    ("amenity", "atm"): "Cajero",
+    ("amenity", "car_wash"): "Lavado de coches",
+    ("shop", "car_repair"): "Taller",
     ("shop", "supermarket"): "Supermercado",
     ("shop", "mall"): "Centro comercial",
     ("tourism", "hotel"): "Hotel",
@@ -196,14 +199,16 @@ def main() -> None:
     n_sitios = 0
     for f in leer(o.sitios):
         t = f.get("properties") or {}
-        nombre = t.get("name") or t.get("brand")
+        # Los cajeros suelen llevar el banco en «operator»
+        nombre = t.get("name") or t.get("brand") or (t.get("operator") if t.get("amenity") == "atm" else None)
         p = centro(f.get("geometry") or {})
         tipo = next((v for (k, val), v in SITIOS.items() if t.get(k) == val), None)
         if not p or not tipo:
             continue
         if not nombre:
             # Sin nombre solo entran los sitios que sirven igual sin él (casi ningún área de descanso tiene nombre)
-            if tipo not in ("Gasolinera", "Punto de recarga", "Farmacia", "Área de servicio", "Área de descanso"):
+            if tipo not in ("Gasolinera", "Punto de recarga", "Farmacia", "Área de servicio", "Área de descanso",
+                            "Cajero", "Lavado de coches", "Taller"):
                 continue
             nombre = tipo
         filas.append((SITIO, 20, nombre, municipios.cercano(p[0], p[1]), tipo, p[1], p[0]))
