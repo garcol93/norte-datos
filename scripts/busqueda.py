@@ -55,6 +55,30 @@ SITIOS = {
     ("highway", "services"): "Área de servicio",
 }
 
+CONECTORES = [
+    ("socket:type2_combo", "CCS"), ("socket:chademo", "CHAdeMO"), ("socket:type2", "Tipo 2"),
+    ("socket:type2_cable", "Tipo 2"), ("socket:type1", "Tipo 1"), ("socket:schuko", "Schuko"),
+    ("socket:tesla_supercharger", "Tesla"),
+]
+
+
+def texto_recarga(t: dict) -> str:
+    """«CCS · Tipo 2 · 50 kW» con lo que diga OpenStreetMap (vacío si no dice nada)."""
+    tipos = []
+    kw = 0.0
+    for clave, nombre in CONECTORES:
+        if t.get(clave) and t.get(clave) != "no" and nombre not in tipos:
+            tipos.append(nombre)
+        salida = t.get(clave + ":output", "")
+        try:
+            valor = float(salida.lower().replace("kw", "").replace(",", ".").split(";")[0].strip())
+            kw = max(kw, valor)
+        except ValueError:
+            pass
+    partes = tipos + ([f"{kw:g} kW"] if kw else [])
+    return " · ".join(partes)
+
+
 CELDA = 0.1  # ~10 km, para buscar el municipio más cercano
 
 
@@ -145,6 +169,8 @@ def crear(salida: Path) -> sqlite3.Connection:
         );
         CREATE VIRTUAL TABLE buscar USING fts4(nombre, municipio, tokenize=unicode61 "remove_diacritics=1");
         CREATE TABLE info (clave TEXT PRIMARY KEY, valor TEXT);
+        -- Puntos de recarga: conectores y potencia («Tipo 2 · CCS · 50 kW»)
+        CREATE TABLE recarga (lugar INTEGER PRIMARY KEY, texto TEXT NOT NULL);
     """)
     return db
 
@@ -197,6 +223,7 @@ def main() -> None:
 
     # Sitios útiles
     n_sitios = 0
+    recarga: dict[int, str] = {}
     for f in leer(o.sitios):
         t = f.get("properties") or {}
         # Los cajeros suelen llevar el banco en «operator»
@@ -213,11 +240,15 @@ def main() -> None:
             nombre = tipo
         filas.append((SITIO, 20, nombre, municipios.cercano(p[0], p[1]), tipo, p[1], p[0]))
         n_sitios += 1
+        if tipo == "Punto de recarga" and (texto := texto_recarga(t)):
+            recarga[len(filas)] = texto  # el id de lugares es la posición (desde 1)
     print(f"sitios: {n_sitios}", file=sys.stderr)
 
     db.executemany(
         "INSERT INTO lugares (tipo, peso, nombre, municipio, detalle, lat, lon) VALUES (?,?,?,?,?,?,?)", filas)
     db.execute("INSERT INTO buscar (docid, nombre, municipio) SELECT id, nombre, municipio FROM lugares")
+    db.executemany("INSERT INTO recarga (lugar, texto) VALUES (?, ?)", recarga.items())
+    print(f"puntos de recarga con conectores: {len(recarga)}", file=sys.stderr)
     # Búsqueda por categoría («Gasolineras cerca»): solo los sitios, por categoría y latitud
     db.execute("CREATE INDEX sitios_categoria ON lugares (detalle, lat) WHERE tipo = 2")
 

@@ -48,6 +48,8 @@ class BusquedaTest(unittest.TestCase):
                 punto(-4.70, 41.70, highway="rest_area"),
                 punto(-4.71, 41.65, amenity="atm", operator="Banco Santander"),
                 punto(-4.715, 41.655, shop="car_repair"),
+                punto(-4.716, 41.656, amenity="charging_station", name="Iberdrola", **{
+                    "socket:type2": "2", "socket:type2_combo": "1", "socket:type2_combo:output": "50 kW"}),
             ]),
             "--portales", seq([punto(-4.7238, 41.6522, **{"addr:street": "Calle Mayor", "addr:housenumber": "12"})]),
             "--salida", str(salida),
@@ -91,6 +93,10 @@ class BusquedaTest(unittest.TestCase):
     def test_cajero_y_taller(self):
         r = dict(self.db.execute("SELECT detalle, nombre FROM lugares WHERE tipo = 2 AND detalle IN ('Cajero', 'Taller')").fetchall())
         self.assertEqual(r, {"Cajero": "Banco Santander", "Taller": "Taller"})
+
+    def test_conectores_de_recarga(self):
+        r = self.db.execute("SELECT l.nombre, r.texto FROM recarga r JOIN lugares l ON l.id = r.lugar").fetchall()
+        self.assertEqual(r, [("Iberdrola", "CCS · Tipo 2 · 50 kW")])
 
 
 if __name__ == "__main__":
