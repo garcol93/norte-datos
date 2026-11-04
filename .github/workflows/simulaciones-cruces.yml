@@ -1,0 +1,46 @@
+name: Simulaciones de cruces
+
+# Recorridos con ruta (salidas, enlaces y bifurcaciones) calculados con el
+# mismo Valhalla que la radio. A mano: solo cambian si cambian los casos o
+# los datos de rutas. Se publican en la release «radares».
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  VALHALLA: ghcr.io/valhalla/valhalla:3.9.0
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  cruces:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Datos de rutas
+        run: |
+          mkdir -p datos && cd datos
+          etiqueta=$(gh release list -R "$GITHUB_REPOSITORY" --limit 50 --json tagName -q '.[].tagName' | grep '^rutas-' | sort | tail -1)
+          gh release download "$etiqueta" -R "$GITHUB_REPOSITORY" -p 'iberia.tar.parte*'
+          cat iberia.tar.parte* > rutas.tar && rm iberia.tar.parte*
+      - name: Rutas de cada caso
+        run: |
+          python3 - > datos/consultas.sh <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          from simulaciones_cruces import CASOS
+          print("set -e; cd /datos; valhalla_build_config --mjolnir-tile-extract /datos/rutas.tar > valhalla.json")
+          for ident, _, _, o, d, _, _ in CASOS:
+              loc = f'"locations":[{{"lat":{o[0]},"lon":{o[1]}}},{{"lat":{d[0]},"lon":{d[1]}}}],"costing":"auto","language":"es-ES"'
+              print(f"valhalla_service valhalla.json route '{{{loc}}}' > {ident}.nativo.json")
+              print(f"valhalla_service valhalla.json route '{{{loc},\\"format\\":\\"osrm\\"}}' > {ident}.osrm.json")
+          PY
+          sed -i 's/\\"format\\":\\"osrm\\"/"format":"osrm"/' datos/consultas.sh
+          cat datos/consultas.sh
+          docker pull -q "$VALHALLA"
+          docker run --rm -v "$PWD/datos:/datos" "$VALHALLA" bash /datos/consultas.sh
+          python3 scripts/simulaciones_cruces.py --rutas datos --salida simulaciones-cruces.json
+      - name: Publicar
+        run: gh release upload radares simulaciones-cruces.json --clobber
