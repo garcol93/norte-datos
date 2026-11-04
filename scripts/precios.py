@@ -1,0 +1,68 @@
+"""Resume los precios de carburantes del Ministerio para la app.
+
+Entrada: el JSON de «EstacionesTerrestres» (≈12 MB, todas las gasolineras de
+España). Salida: un CSV comprimido con lo justo (≈0,3 MB):
+  fecha en la primera línea («#04/11/2026 12:50:38»), y luego
+  lat;lon;rótulo;g95;g98;diesel;diesel_plus;glp
+Los precios van en milésimas de euro (1489 = 1,489 €/l); vacío si no lo vende.
+"""
+import argparse
+import gzip
+import json
+import sys
+from pathlib import Path
+
+# Carburante de la app → columnas del Ministerio, por orden de preferencia
+CARBURANTES = {
+    "g95": ["Precio Gasolina 95 E5", "Precio Gasolina 95 E10"],
+    "g98": ["Precio Gasolina 98 E5", "Precio Gasolina 98 E10"],
+    "diesel": ["Precio Gasoleo A"],
+    "diesel_plus": ["Precio Gasoleo Premium"],
+    "glp": ["Precio Gases licuados del petróleo"],
+}
+
+
+def numero(texto: str) -> float | None:
+    texto = (texto or "").strip().replace(",", ".")
+    try:
+        return float(texto)
+    except ValueError:
+        return None
+
+
+def precio(estacion: dict, columnas: list[str]) -> str:
+    for c in columnas:
+        v = numero(estacion.get(c, ""))
+        if v and 0.3 < v < 5:
+            return str(round(v * 1000))
+    return ""
+
+
+def resumir(datos: dict) -> list[str]:
+    lineas = ["#" + (datos.get("Fecha") or "")]
+    for e in datos.get("ListaEESSPrecio", []):
+        lat, lon = numero(e.get("Latitud")), numero(e.get("Longitud (WGS84)"))
+        if lat is None or lon is None:
+            continue
+        precios = [precio(e, cols) for cols in CARBURANTES.values()]
+        if not any(precios):
+            continue
+        rotulo = " ".join((e.get("Rótulo") or "").split()).replace(";", ",").title()
+        lineas.append(";".join([f"{lat:.5f}", f"{lon:.5f}", rotulo, *precios]))
+    return lineas
+
+
+def main() -> None:
+    a = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    a.add_argument("entrada", type=Path)
+    a.add_argument("salida", type=Path)
+    o = a.parse_args()
+    datos = json.loads(o.entrada.read_text(encoding="utf-8-sig"))
+    lineas = resumir(datos)
+    with gzip.open(o.salida, "wt", encoding="utf-8") as f:
+        f.write("\n".join(lineas) + "\n")
+    print(f"gasolineras: {len(lineas) - 1} · {o.salida.stat().st_size} bytes", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

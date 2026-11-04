@@ -1,0 +1,36 @@
+name: Precios de carburantes
+
+# Cada 3 horas resume los precios del Ministerio (≈12 MB) en un CSV pequeño
+# que la radio baja con internet. Se publica siempre en la release «precios».
+on:
+  schedule:
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: precios
+  cancel-in-progress: true
+
+jobs:
+  precios:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pruebas
+        run: python3 -m unittest tests.test_precios -v
+      - name: Descargar y resumir
+        run: |
+          curl -sfL --retry 4 --retry-delay 20 -m 180 -H "Accept: application/json" \
+            -o estaciones.json "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/"
+          python3 scripts/precios.py estaciones.json precios.csv.gz
+      - name: Publicar
+        run: |
+          gh release view precios >/dev/null 2>&1 || \
+            gh release create precios --title "Precios de carburantes" --notes "Precios del Ministerio, resumidos para Norte cada 3 horas."
+          gh release upload precios precios.csv.gz --clobber
