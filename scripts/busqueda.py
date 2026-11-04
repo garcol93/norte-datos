@@ -212,6 +212,8 @@ def main() -> None:
     db.executemany(
         "INSERT INTO lugares (tipo, peso, nombre, municipio, detalle, lat, lon) VALUES (?,?,?,?,?,?,?)", filas)
     db.execute("INSERT INTO buscar (docid, nombre, municipio) SELECT id, nombre, municipio FROM lugares")
+    # Búsqueda por categoría («Gasolineras cerca»): solo los sitios, por categoría y latitud
+    db.execute("CREATE INDEX sitios_categoria ON lugares (detalle, lat) WHERE tipo = 2")
 
     # Portales: se asocian a la calle con el mismo nombre en el municipio más cercano
     id_calle = {}
