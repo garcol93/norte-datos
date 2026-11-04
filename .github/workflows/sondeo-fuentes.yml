@@ -20,23 +20,16 @@ jobs:
             echo "   gzip: $(gzip -9c "$n" | wc -c) bytes"
             head -c 1500 "$n" | tr '\n' ' ' | cut -c1-1500; echo; echo
           }
-          medir precios.json "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/" -H "Accept: application/json"
-          python3 - <<'PY'
-          import json
-          try:
-              d = json.load(open("precios.json", encoding="utf-8-sig"))
-              l = d.get("ListaEESSPrecio", [])
-              print("estaciones:", len(l), "fecha:", d.get("Fecha"), "nota:", d.get("Nota"))
-              print("campos:", list(l[0].keys()) if l else None)
-              print("ejemplo:", json.dumps(l[0], ensure_ascii=False)[:900] if l else None)
-          except Exception as e:
-              print("no se pudo leer precios:", e)
-          PY
           medir sct-gml.xml "https://www.gencat.cat/transit/opendata/incidenciesGML.xml"
           medir sct-rss.xml "https://www.gencat.cat/transit/opendata/incidenciesRSS.xml"
           medir sct-nap.xml "https://nap.dgt.es/datex2/v3/sct/SituationPublication/datex2_v37.xml"
           medir sct-infocar.xml "https://infocar.dgt.es/datex2/sct/SituationPublication/all/content.xml"
           medir euskadi-api.json "https://api.euskadi.eus/traffic/v1.0/incidences?_page=1"
           medir euskadi-nap.xml "https://nap.dgt.es/datex2/v3/dt-gv/SituationPublication/datex2_v37.xml"
-          medir nap-catalogo.html "https://nap.dgt.es/es/dataset?q=incidencias"
-          grep -oE 'href="/es/dataset/[a-z0-9-]+"' nap-catalogo.html | sort -u | head -40
+          for ds in incidencias-sct incidencias-dt-gv; do
+            curl -sL -m 60 "https://nap.dgt.es/es/dataset/$ds" -o "$ds.html"
+            echo "== recursos de $ds:"; grep -oE 'https?://[^"<> ]+\.(xml|json|zip)[^"<> ]*' "$ds.html" | sort -u | head -10
+          done
+          echo "== SCT GML (muestra)"; python3 -c "import re;t=open('sct-gml.xml',encoding='utf-8',errors='replace').read();print(t[:200]);m=re.findall(r'<[^>]*incidencia[^>]*>.*?</[^>]*incidencia[^>]*>',t,re.S);print(len(m));print(m[0][:2500] if m else t[200:3200])"
+          echo "== SCT RSS (muestra)"; head -c 2500 sct-rss.xml; echo
+          echo "== Euskadi (muestra)"; python3 -c "import json;d=json.load(open('euskadi-api.json'));print({k:(v if not isinstance(v,list) else len(v)) for k,v in d.items()});l=d.get('incidences') or [];print(json.dumps(l[:2],ensure_ascii=False)[:2500])"
