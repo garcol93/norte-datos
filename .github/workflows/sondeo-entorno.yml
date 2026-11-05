@@ -1,0 +1,87 @@
+name: Sondeo del entorno de la ruta
+
+# Comprueba qué da Valhalla (el mismo motor que la app) a lo largo de una ruta con
+# trace_attributes en modo edge_walk: límites de velocidad por tramo, semáforos y carriles.
+# No publica nada.
+on:
+  workflow_dispatch:
+
+env:
+  VALHALLA: ghcr.io/valhalla/valhalla:3.9.0
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  entorno:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Datos de rutas
+        run: |
+          mkdir -p datos && cd datos
+          etiqueta=$(gh release list -R "$GITHUB_REPOSITORY" --limit 50 --json tagName -q '.[].tagName' | grep '^rutas-' | sort | tail -1)
+          echo "release: $etiqueta"
+          gh release download "$etiqueta" -R "$GITHUB_REPOSITORY" -p 'iberia.tar.parte*'
+          cat iberia.tar.parte* > rutas.tar && rm iberia.tar.parte*
+
+      - name: Consultas
+        run: |
+          docker pull -q "$VALHALLA"
+          cat > datos/forma.py <<'PY'
+          import json, sys
+          def decodificar(s, p=6):
+              i = lat = lon = 0; r = []
+              while i < len(s):
+                  for k in (0, 1):
+                      res = sh = 0
+                      while True:
+                          b = ord(s[i]) - 63; i += 1; res |= (b & 0x1f) << sh; sh += 5
+                          if b < 0x20: break
+                      d = ~(res >> 1) if res & 1 else res >> 1
+                      if k == 0: lat += d
+                      else: lon += d
+                  r.append((lat / 10**p, lon / 10**p))
+              return r
+          n = json.load(open(sys.argv[1]))
+          pts = decodificar(n["trip"]["legs"][0]["shape"])
+          filtros = ["edge.length", "edge.speed_limit", "edge.speed", "edge.names", "edge.road_class", "edge.lane_count",
+                     "edge.begin_shape_index", "edge.end_shape_index", "edge.use", "edge.traffic_signal",
+                     "node.traffic_signal", "node.type", "node.elapsed_time"]
+          print(json.dumps({"shape": [{"lat": a, "lon": b} for a, b in pts], "costing": "auto", "shape_match": "edge_walk",
+                            "filters": {"attributes": filtros, "action": "include"}}))
+          PY
+          cat > datos/consulta.sh <<'SH'
+          set -e
+          cd /datos
+          valhalla_build_config --mjolnir-tile-extract /datos/rutas.tar > valhalla.json
+          # Ciudad con muchos semáforos: Moncloa → Puerta del Sol
+          valhalla_service valhalla.json route '{"locations":[{"lat":40.4352,"lon":-3.7191},{"lat":40.4169,"lon":-3.7035}],"costing":"auto"}' > ciudad.json
+          python3 forma.py ciudad.json > ciudad-forma.json
+          valhalla_service valhalla.json trace_attributes "$(cat ciudad-forma.json)" > ciudad-attr.json || echo "FALLO ciudad"
+          # Autovía con cambios de límite: Moncloa → Las Rozas por la A-6
+          valhalla_service valhalla.json route '{"locations":[{"lat":40.4352,"lon":-3.7191},{"lat":40.4925,"lon":-3.8730}],"costing":"auto"}' > autovia.json
+          python3 forma.py autovia.json > autovia-forma.json
+          valhalla_service valhalla.json trace_attributes "$(cat autovia-forma.json)" > autovia-attr.json || echo "FALLO autovía"
+          SH
+          docker run --rm -v "$PWD/datos:/datos" "$VALHALLA" bash /datos/consulta.sh
+          python3 - <<'PY'
+          import json, collections
+          for nombre in ("ciudad", "autovia"):
+              try:
+                  a = json.load(open(f"datos/{nombre}-attr.json"))
+              except Exception as e:
+                  print(nombre, "SIN RESPUESTA:", e); continue
+              print("=====", nombre, "claves:", list(a.keys()))
+              if "error" in a or "status" in a: print(json.dumps(a)[:600])
+              ed = a.get("edges", []); no = a.get("nodes", [])
+              print("aristas", len(ed), "nodos", len(no))
+              print("claves de arista:", dict(collections.Counter(k for e in ed for k in e)))
+              print("claves de nodo:", dict(collections.Counter(k for n in no for k in n)))
+              for e in ed[:4]: print("arista", json.dumps(e, ensure_ascii=False)[:420])
+              for n in no[:4]: print("nodo", json.dumps(n, ensure_ascii=False)[:420])
+              print("semáforos en nodos:", sum(1 for n in no if n.get("traffic_signal")), "en aristas:", sum(1 for e in ed if e.get("traffic_signal")))
+              print("límites distintos:", collections.Counter(e.get("speed_limit") for e in ed))
+              print("carriles:", collections.Counter(e.get("lane_count") for e in ed))
+              km = sum(e.get("length", 0) for e in ed)
+              print("longitud total (unidad de Valhalla):", round(km, 3), "| forma de la ruta:", len(a.get("shape", "")), "caracteres")
+              print("ejemplo de nodo con semáforo:", next((json.dumps(n)[:300] for n in no if n.get("traffic_signal")), None))
+          PY
