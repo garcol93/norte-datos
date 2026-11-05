@@ -45,7 +45,7 @@ jobs:
           pts = decodificar(n["trip"]["legs"][0]["shape"])
           filtros = ["edge.length", "edge.speed_limit", "edge.speed", "edge.names", "edge.road_class", "edge.lane_count",
                      "edge.begin_shape_index", "edge.end_shape_index", "edge.use", "edge.traffic_signal",
-                     "node.traffic_signal", "node.type", "node.elapsed_time"]
+                     "node.traffic_signal", "node.type", "node.elapsed_time", "edge.traversability", "edge.begin_heading", "edge.end_heading", "edge.drive_on_right", "edge.sign"]
           print(json.dumps({"shape": [{"lat": a, "lon": b} for a, b in pts], "costing": "auto", "shape_match": "edge_walk",
                             "filters": {"attributes": filtros, "action": "include"}}))
           PY
@@ -61,11 +61,15 @@ jobs:
           valhalla_service valhalla.json route '{"locations":[{"lat":40.4352,"lon":-3.7191},{"lat":40.4925,"lon":-3.8730}],"costing":"auto"}' > autovia.json
           python3 forma.py autovia.json > autovia-forma.json
           valhalla_service valhalla.json trace_attributes "$(cat autovia-forma.json)" > autovia-attr.json || echo "FALLO autovía"
+          # Con salidas y rampas: Moncloa → Aeropuerto de Barajas por la M-30 y la A-2
+          valhalla_service valhalla.json route '{"locations":[{"lat":40.4352,"lon":-3.7191},{"lat":40.4983,"lon":-3.5676}],"costing":"auto"}' > rampas.json
+          python3 forma.py rampas.json > rampas-forma.json
+          valhalla_service valhalla.json trace_attributes "$(cat rampas-forma.json)" > rampas-attr.json || echo "FALLO rampas"
           SH
           docker run --rm -v "$PWD/datos:/datos" "$VALHALLA" bash /datos/consulta.sh
           python3 - <<'PY'
           import json, collections
-          for nombre in ("ciudad", "autovia"):
+          for nombre in ("ciudad", "autovia", "rampas"):
               try:
                   a = json.load(open(f"datos/{nombre}-attr.json"))
               except Exception as e:
@@ -83,5 +87,14 @@ jobs:
               print("carriles:", collections.Counter(e.get("lane_count") for e in ed))
               km = sum(e.get("length", 0) for e in ed)
               print("longitud total (unidad de Valhalla):", round(km, 3), "| forma de la ruta:", len(a.get("shape", "")), "caracteres")
+              print("use:", collections.Counter(e.get("use") for e in ed))
+              print("traversability:", collections.Counter(e.get("traversability") for e in ed))
+              print("road_class:", collections.Counter(e.get("road_class") for e in ed))
+              print("drive_on_right:", collections.Counter(e.get("drive_on_right") for e in ed))
+              ramps = [(k, e) for k, e in enumerate(ed) if e.get("use") == "ramp"]
+              print("rampas:", len(ramps))
+              for k, e in ramps[:6]:
+                  ant = ed[k-1] if k else {}
+                  print("  rampa en arista", k, "límite", e.get("speed_limit"), "carriles", e.get("lane_count"), "trav", e.get("traversability"), "| anterior: use", ant.get("use"), "límite", ant.get("speed_limit"), "carriles", ant.get("lane_count"), "| sign", json.dumps(e.get("sign"), ensure_ascii=False)[:200])
               print("ejemplo de nodo con semáforo:", next((json.dumps(n)[:300] for n in no if n.get("traffic_signal")), None))
           PY
