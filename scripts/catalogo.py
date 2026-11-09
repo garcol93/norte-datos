@@ -20,6 +20,12 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent
 
 
+def sha256(asset: dict) -> str | None:
+    """Hash que GitHub calcula de cada archivo publicado («sha256:…»), o None si no lo da."""
+    d = asset.get("digest") or ""
+    return d.removeprefix("sha256:") if d.startswith("sha256:") else None
+
+
 def api(ruta: str):
     url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/{ruta}"
     peticion = urllib.request.Request(url, headers={
@@ -55,6 +61,7 @@ def main() -> None:
                 "archivo": asset["name"],
                 "url": asset["browser_download_url"],
                 "bytes": asset["size"],
+                "sha256": sha256(asset),
                 "version": version,
             }
 
@@ -68,6 +75,7 @@ def main() -> None:
                     "id": asset["name"].removesuffix(".geojson"),
                     "url": asset["browser_download_url"],
                     "bytes": asset["size"],
+                    "sha256": sha256(asset),
                     "version": asset["updated_at"],
                 })
 
@@ -76,6 +84,7 @@ def main() -> None:
     for rel in sorted((r for r in releases if r["tag_name"].startswith("rutas-")),
                       key=lambda r: r["tag_name"], reverse=True):
         urls = {a["name"]: a["browser_download_url"] for a in rel["assets"]}
+        hashes = {a["name"]: sha256(a) for a in rel["assets"]}
         for nombre_archivo, url in urls.items():
             if not nombre_archivo.endswith(".rutas.json"):
                 continue
@@ -84,7 +93,7 @@ def main() -> None:
             ident = manifiesto["id"]
             if ident in rutas:
                 continue
-            partes = [{"url": urls[p["archivo"]], "bytes": p["bytes"]} for p in manifiesto["partes"] if p["archivo"] in urls]
+            partes = [{"url": urls[p["archivo"]], "bytes": p["bytes"], "sha256": p.get("sha256") or hashes[p["archivo"]]} for p in manifiesto["partes"] if p["archivo"] in urls]
             if len(partes) != len(manifiesto["partes"]):
                 continue  # release incompleta
             rutas[ident] = {
@@ -113,6 +122,7 @@ def main() -> None:
                 "archivo": asset["name"],
                 "url": asset["browser_download_url"],
                 "bytes": asset["size"],
+                "sha256": sha256(asset),
                 "version": rel["tag_name"].removeprefix("busqueda-"),
             }
 
