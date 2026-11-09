@@ -18,7 +18,7 @@ import sys
 from collections import Counter, defaultdict
 
 FILA = re.compile(
-    r"^(?P<prov>[A-ZÁÉÍÓÚÑÜa-záéíóúñü�' .\-/]+?)\s+(?P<via>[A-Z]{1,3}-?\d{1,4}[A-Z]?)\s+(?P<tipo>M[oó]vil|Fijo|Tramo)\s+"
+    r"^(?P<prov>[A-ZÁÉÍÓÚÑÜa-záéíóúñü�' .\-/]+?)\s+(?P<via>[A-Z]{1,3}-?\d{1,4}[A-Z]?)\s+(?:Radar\s+)?(?P<tipo>M[oó]vil|Fijo|Tramo)\s+"
     r"(?P<ini>\d+(?:[.,]\d+)?)(?:\s*-\s*(?P<fin>\d+(?:[.,]\d+)?))?\s*(?P<resto>.*)$",
     re.I,
 )

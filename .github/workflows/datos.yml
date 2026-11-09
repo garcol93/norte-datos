@@ -1,11 +1,17 @@
 name: Generar datos
 
-# Radares cada lunes; mapas el día 2 de cada mes. También a mano desde la
+# Radares cada lunes (y al cambiar sus scripts); mapas el día 2 de cada mes. También a mano desde la
 # pestaña Actions («Run workflow»), eligiendo qué generar.
 on:
   schedule:
     - cron: "17 3 * * 1"   # radares
     - cron: "23 4 2 * *"   # mapas
+  # Al cambiar los scripts de radares o zonas se regeneran solo los radares
+  push:
+    paths:
+      - scripts/zbe.py
+      - scripts/radares_dgt.py
+      - scripts/osm_radares.py
   workflow_dispatch:
     inputs:
       que:
@@ -32,6 +38,7 @@ jobs:
   radares:
     if: >-
       (github.event_name == 'schedule' && github.event.schedule == '17 3 * * 1') ||
+      github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && inputs.que != 'mapas')
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -63,12 +70,16 @@ jobs:
             --salida-osm build/osm.geojson --salida-zonas build/zonas.geojson
           python3 scripts/simulaciones.py --dgt build/dgt.geojson --osm build/osm.geojson \
             --vias vias.geojsonseq --salida build/simulaciones.json
+          # Zonas de bajas emisiones
+          osmium tags-filter espana.osm.pbf boundary=low_emission_zone -o zbe.osm.pbf
+          osmium export zbe.osm.pbf -f geojsonseq --geometry-types=polygon -a type,id -o zbe.geojsonseq
+          python3 scripts/zbe.py --zbe zbe.geojsonseq --salida build/zbe.geojson
           rm -f espana.osm.pbf vias.osm.pbf vias.geojsonseq
       - name: Publicar radares
         run: |
           gh release view radares >/dev/null 2>&1 || gh release create radares \
             --title "Radares" --notes "Radares fijos y de tramo para Norte. Se actualizan cada semana."
-          gh release upload radares build/dgt.geojson build/osm.geojson build/zonas.geojson build/simulaciones.json --clobber
+          gh release upload radares build/dgt.geojson build/osm.geojson build/zonas.geojson build/zbe.geojson build/simulaciones.json --clobber
       - name: Catálogo
         run: |
           python3 scripts/catalogo.py --salida build/catalogo.json
