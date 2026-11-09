@@ -4,7 +4,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from zbe import nombre_de, zona  # noqa: E402
+import datetime as dt  # noqa: E402
+
+from zbe import nombre_de, vigente, zona  # noqa: E402
 
 
 def cuadrado(lon, lat, lado=0.01, **tags):
@@ -27,6 +29,17 @@ class ZbeTest(unittest.TestCase):
         self.assertIn("motor_vehicle:conditional", p["reglas"])
         self.assertEqual(p["nota"], "Etiquetas B y C con restricciones")
         self.assertEqual(z["geometry"]["type"], "Polygon")
+
+    def test_nombre_generico_se_salta(self):
+        self.assertEqual(nombre_de({"name:es": "Zona de Bajas Emisiones", "name": "Emisio Gutxiko Ermua"}), "Emisio Gutxiko Ermua")
+
+    def test_vigente(self):
+        hoy = dt.date(2026, 11, 9)
+        self.assertTrue(vigente({"start_date": "2025"}, hoy))
+        self.assertFalse(vigente({"start_date": "2028"}, hoy))
+        self.assertFalse(vigente({"opening_date": "2027-01-01"}, hoy))
+        self.assertFalse(vigente({"status": "supended"}, hoy))
+        self.assertTrue(vigente({}, hoy))
 
     def test_descarta_lo_que_no_es_zbe_o_vacio(self):
         self.assertIsNone(zona(cuadrado(0, 0, boundary="administrative")))

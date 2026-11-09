@@ -13,6 +13,7 @@ no decide si un coche concreto puede entrar.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import re
 from pathlib import Path
@@ -28,18 +29,37 @@ def leer_secuencia(ruta: Path):
                 yield json.loads(linea)
 
 
+GENERICO = "zona de bajas emisiones"
+
+
 def nombre_de(tags: dict) -> str:
+    # «Zona de Bajas Emisiones» a secas no dice de dónde es: se prueba el siguiente
     for k in ("name:es", "name", "official_name", "name:ca", "name:eu", "name:gl"):
-        if tags.get(k):
+        if tags.get(k) and tags[k].strip().lower() != GENERICO:
             return tags[k].strip()
     return "Zona de bajas emisiones"
+
+
+def vigente(tags: dict, hoy: dt.date | None = None) -> bool:
+    """Fuera las zonas suspendidas y las que aún no han empezado (start_date u opening_date futuras)."""
+    hoy = hoy or dt.date.today()
+    if str(tags.get("status", "")).lower() in ("suspended", "supended", "planned", "proposed"):
+        return False
+    for k in ("start_date", "opening_date"):
+        v = str(tags.get(k, "")).strip()
+        m = re.match(r"^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?", v)
+        if m:
+            fecha = dt.date(int(m.group(1)), int(m.group(2) or 1), int(m.group(3) or 1))
+            if fecha > hoy:
+                return False
+    return True
 
 
 def zona(feature: dict, tolerancia: float = TOLERANCIA) -> dict | None:
     from shapely.geometry import mapping, shape
 
     tags = feature.get("properties") or {}
-    if tags.get("boundary") not in (None, "low_emission_zone"):
+    if tags.get("boundary") not in (None, "low_emission_zone") or not vigente(tags):
         return None
     geom = shape(feature["geometry"])
     if geom.is_empty or geom.area <= 0:
