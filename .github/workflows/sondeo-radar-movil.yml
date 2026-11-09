@@ -1,0 +1,113 @@
+name: Sondeo de radar móvil
+
+# Busca una fuente oficial y procesable de los tramos vigilados con radar
+# móvil (DGT, NAP, datos.gob.es). No publica datos: deja un informe en la
+# release «sondeo» para decidir si se llevan a la app.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/sondeo-radar-movil.yml
+
+permissions:
+  contents: write
+
+jobs:
+  buscar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Buscar fuentes
+        run: |
+          set +e
+          mkdir -p s && cd s
+          UA="Mozilla/5.0 (X11; Linux x86_64) norte-datos"
+          {
+          echo "# Sondeo de radar móvil · $(date -u +%FT%TZ)"
+          baja() { # nombre url
+            curl -sL --compressed -A "$UA" -m 90 -o "$1" -w "== $1 → HTTP %{http_code} · %{content_type} · %{size_download} bytes · %{url_effective}\n" "$2"
+          }
+          enlaces() { # archivo
+            grep -oiE 'href="[^"]+"' "$1" | sed -E 's/^href="//I; s/"$//' \
+              | grep -iE 'radar|movil|m%C3%B3vil|tramo|vigila|cinemometro|velocidad|\.(pdf|xlsx?|csv|json|xml|zip|kml|kmz)' \
+              | sort -u | head -80
+          }
+
+          echo; echo "## NAP de la DGT (CKAN)"
+          for q in radar movil tramos velocidad cinemometro; do
+            baja nap-$q.json "https://nap.dgt.es/api/3/action/package_search?q=$q&rows=50"
+            python3 - "$q" <<'PY'
+          import json,sys
+          q=sys.argv[1]
+          try: d=json.load(open(f"nap-{q}.json"))
+          except Exception as e: print("  no es JSON:",e); sys.exit()
+          for p in d.get("result",{}).get("results",[]):
+              print(f"  · {p.get('name')} — {p.get('title')}")
+              for r in p.get("resources",[]): print(f"      {r.get('format')} {r.get('url')}")
+          PY
+          done
+          baja nap-lista.html "https://nap.dgt.es/es/dataset"
+          enlaces nap-lista.html
+
+          echo; echo "## datos.gob.es"
+          for q in radar radares%20moviles tramos%20vigilados; do
+            baja dg-$q.json "https://datos.gob.es/apidata/catalog/dataset/title/$q.json?_pageSize=50"
+            python3 - "dg-$q.json" <<'PY'
+          import json,sys
+          try: d=json.load(open(sys.argv[1]))
+          except Exception as e: print("  no es JSON:",e); sys.exit()
+          for it in d.get("result",{}).get("items",[]):
+              t=it.get("title"); t=t[0].get("_value") if isinstance(t,list) and t and isinstance(t[0],dict) else t
+              print(f"  · {t} — {it.get('_about')}")
+              dist=it.get("distribution") or []
+              if isinstance(dist,dict): dist=[dist]
+              for x in dist[:6]:
+                  if isinstance(x,dict): print(f"      {x.get('format',{}).get('value') if isinstance(x.get('format'),dict) else x.get('format')} {x.get('accessURL')}")
+          PY
+          done
+
+          echo; echo "## Web de la DGT"
+          baja dgt-mapa.xml "https://www.dgt.es/sitemap.xml"
+          grep -oE '<loc>[^<]+</loc>' dgt-mapa.xml | sed -E 's/<\/?loc>//g' > mapas.txt
+          echo "  sitemaps/urls: $(wc -l < mapas.txt)"
+          # sitemaps anidados
+          grep -iE 'sitemap' mapas.txt | head -20 | while read -r u; do curl -sL -A "$UA" -m 60 "$u"; done \
+            | grep -oE '<loc>[^<]+</loc>' | sed -E 's/<\/?loc>//g' >> mapas.txt
+          grep -iE 'radar|movil|m%c3%b3vil|vigilad|cinemometro' mapas.txt | sort -u | head -60 | tee paginas.txt
+          for u in https://www.dgt.es/conoce-la-dgt/que-hacemos/seguridad-vial/radares/ \
+                   https://www.dgt.es/muevete-con-seguridad/radares/ \
+                   https://www.dgt.es/nuestros-servicios/radares/ \
+                   https://revista.dgt.es/es/noticias/nacional/radares.shtml; do
+            echo "$u" >> paginas.txt
+          done
+          n=0
+          sort -u paginas.txt | head -25 | while read -r u; do
+            n=$((n+1)); baja "p$n.html" "$u"; [ -s "p$n.html" ] && enlaces "p$n.html" | sed 's/^/    /'
+          done
+
+          echo; echo "## Documentos encontrados"
+          cat p*.html nap-lista.html 2>/dev/null | grep -oiE '(https?://[^"<> ]+|/[^"<> ]+)\.(pdf|xlsx?|csv|json|xml|zip|kml|kmz)' \
+            | grep -iE 'radar|movil|tramo|vigila|cinemo|velocidad' | sort -u | head -40 | tee docs.txt
+          i=0
+          while read -r d; do
+            case "$d" in /*) d="https://www.dgt.es$d";; esac
+            i=$((i+1)); ext="${d##*.}"; baja "doc$i.$ext" "$d"
+            case "$ext" in
+              pdf) pip install -q pdfminer.six >/dev/null 2>&1; python3 -c "from pdfminer.high_level import extract_text as e;t=e('doc$i.pdf');print('   páginas~',t.count('\f'));print(t[:1500])" ;;
+              xls|xlsx) pip install -q openpyxl xlrd >/dev/null 2>&1; python3 -c "import pandas as p;x=p.read_excel('doc$i.$ext',sheet_name=None);[print('  hoja',k,v.shape,'\n',v.head(8).to_string()) for k,v in x.items()]" ;;
+              *) head -c 1500 "doc$i.$ext"; echo ;;
+            esac
+          done < <(head -12 docs.txt)
+
+          echo; echo "## XML DATEX de radares: ¿algún móvil?"
+          baja radares.xml "https://nap.dgt.es/datex2/dgt/PredefinedLocationsPublication/radares/content.xml"
+          grep -oiE '<[^>]*(mobile|movil|móvil)[^>]*>' radares.xml | sort | uniq -c | head
+          grep -oiE 'predefinedLocationName>[^<]{0,80}' radares.xml | grep -iE 'movil|móvil|mobile' | head
+          } 2>&1 | tee ../informe-radar-movil.txt
+
+      - name: Publicar informe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd s && tar czf ../muestras-radar-movil.tar.gz $(ls | head -200) 2>/dev/null; cd ..
+          gh release upload sondeo informe-radar-movil.txt muestras-radar-movil.tar.gz -R "$GITHUB_REPOSITORY" --clobber
