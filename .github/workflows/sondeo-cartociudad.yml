@@ -1,0 +1,40 @@
+name: Sondeo de CartoCiudad
+
+# Mide cuántos tramos de radar móvil del PDF de la DGT sitúa el geocodificador
+# de puntos kilométricos de CartoCiudad (IGN). No publica datos: deja un
+# informe en la release «sondeo».
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/sondeo-cartociudad.yml
+      - scripts/sondeo_cartociudad.py
+
+permissions:
+  contents: write
+
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -q pdfplumber
+      - name: Medir
+        run: |
+          set +e
+          UA="Mozilla/5.0 (X11; Linux x86_64) norte-datos"
+          PAG="https://www.dgt.es/conoce-el-estado-del-trafico/vigilancia-y-control/equipos-y-tramos-de-vigilancia/"
+          curl -sL -A "$UA" -m 90 -o pagina.html "$PAG"
+          url=$(grep -oiE 'href="[^"]*INFORME_CINEMOMETROS[^"]*\.pdf"' pagina.html | head -1 | sed -E 's/^href="//; s/"$//')
+          case "$url" in /*) url="https://www.dgt.es$url";; esac
+          curl -sL -A "$UA" -m 120 -o informe.pdf "$url"
+          {
+            echo "# Sondeo de CartoCiudad · $(date -u +%FT%TZ)"
+            echo "PDF: $url"
+            cd scripts && python3 -u sondeo_cartociudad.py ../informe.pdf
+          } 2>&1 | tee informe-cartociudad.txt
+      - name: Publicar informe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload sondeo informe-cartociudad.txt -R "$GITHUB_REPOSITORY" --clobber
