@@ -10,6 +10,7 @@ on:
   push:
     paths:
       - scripts/zbe.py
+      - scripts/radar_movil.py
       - scripts/radares_dgt.py
       - scripts/osm_radares.py
   workflow_dispatch:
@@ -41,13 +42,13 @@ jobs:
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && inputs.que != 'mapas')
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Herramientas
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
-          pip install -q shapely
+          pip install -q shapely pdfplumber
       - name: Pruebas
         run: python3 -m unittest discover -s tests -v
       - name: Radares DGT
@@ -70,6 +71,19 @@ jobs:
             --salida-osm build/osm.geojson --salida-zonas build/zonas.geojson
           python3 scripts/simulaciones.py --dgt build/dgt.geojson --osm build/osm.geojson \
             --vias vias.geojsonseq --salida build/simulaciones.json
+          # Zonas de posible radar móvil: PDF de la DGT + CartoCiudad + trazado por OSM.
+          # Si la DGT o CartoCiudad fallan, se queda la versión publicada anterior.
+          (
+            set +e
+            UA="Mozilla/5.0 (X11; Linux x86_64) norte-datos"
+            PAG="https://www.dgt.es/conoce-el-estado-del-trafico/vigilancia-y-control/equipos-y-tramos-de-vigilancia/"
+            url=$(curl -sL -A "$UA" -m 90 "$PAG" | grep -oiE 'href="[^"]*INFORME_CINEMOMETROS[^"]*\.pdf"' | head -1 | sed -E 's/^href="//; s/"$//')
+            case "$url" in /*) url="https://www.dgt.es$url";; esac
+            curl -sfL -A "$UA" -m 120 -o movil.pdf "$url" \
+              && { curl -sfL -o build/movil-cache.json.tmp https://github.com/garcol93/norte-datos/releases/download/radares/movil-cache.json || echo '{}' > build/movil-cache.json.tmp; } \
+              && (cd scripts && python3 radar_movil.py --pdf ../movil.pdf --vias ../vias.geojsonseq --cache ../build/movil-cache.json.tmp --salida ../build/movil.geojson) \
+              || echo "::warning::No se pudieron generar las zonas de radar móvil; se mantiene la versión anterior"
+          )
           # Zonas de bajas emisiones
           osmium tags-filter espana.osm.pbf boundary=low_emission_zone -o zbe.osm.pbf
           osmium export zbe.osm.pbf -f geojsonseq --geometry-types=polygon -a type,id -o zbe.geojsonseq
@@ -80,6 +94,10 @@ jobs:
           gh release view radares >/dev/null 2>&1 || gh release create radares \
             --title "Radares" --notes "Radares fijos y de tramo para Norte. Se actualizan cada semana."
           gh release upload radares build/dgt.geojson build/osm.geojson build/zonas.geojson build/zbe.geojson build/simulaciones.json --clobber
+          if [ -s build/movil.geojson ]; then
+            cp build/movil-cache.json.tmp build/movil-cache.json
+            gh release upload radares build/movil.geojson build/movil-cache.json --clobber
+          fi
       - name: Catálogo
         run: |
           python3 scripts/catalogo.py --salida build/catalogo.json
