@@ -28,6 +28,18 @@ class RadarMovilTest(unittest.TestCase):
         self.assertEqual(puntos[-1], (0.01, 0.01))
         self.assertIn((0.0, 0.01), puntos)
 
+    def test_une_trozos_cortados_por_una_rotonda(self):
+        # Dos trozos de la misma carretera separados ~100 m (rotonda sin «ref»)
+        lineas = [[(0.0, 0.0), (0.0, 0.01)], [(0.0, 0.0109), (0.0, 0.02)]]
+        g = Grafo(lineas)
+        self.assertEqual(g.puentes, 1)
+        puntos, aprox = trazar(g, (0.0, 0.0), (0.0, 0.02), 2200)
+        self.assertFalse(aprox)
+
+    def test_no_une_trozos_lejanos(self):
+        g = Grafo([[(0.0, 0.0), (0.0, 0.01)], [(0.0, 0.02), (0.0, 0.03)]])
+        self.assertEqual(g.puentes, 0)
+
     def test_sin_carretera_cerca_linea_recta(self):
         puntos, aprox = trazar(Grafo([[(1.0, 1.0), (1.0, 1.01)]]), (0.0, 0.0), (0.01, 0.01), 2200)
         self.assertTrue(aprox)

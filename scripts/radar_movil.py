@@ -28,7 +28,8 @@ from pathlib import Path
 from sondeo_cartociudad import coincide, coords, dist_m, pedir
 from sondeo_radar_movil import leer_pdf, ref_normal
 
-DISTANCIA_EXTREMO_M = 300.0  # un extremo se engancha a la carretera de OSM si está a menos de esto
+DISTANCIA_EXTREMO_M = 1000.0  # un extremo se engancha a la carretera de OSM si está a menos de esto
+PUENTE_M = 250.0  # trozos sueltos de la misma carretera (rotondas, travesías sin «ref») se unen si están a menos de esto
 SIMPLIFICAR = 0.00015  # ~15 m
 
 
@@ -92,6 +93,56 @@ class Grafo:
                 self.ady[p].append((q, d))
                 self.ady[q].append((p, d))
         self.nodos = list(self.ady)
+        self.puentes = self._unir_trozos()
+
+    def _componentes(self) -> dict[tuple, int]:
+        comp: dict[tuple, int] = {}
+        for inicio in self.nodos:
+            if inicio in comp:
+                continue
+            n = len(set(comp.values()))
+            pila = [inicio]
+            comp[inicio] = n
+            while pila:
+                x = pila.pop()
+                for y, _ in self.ady[x]:
+                    if y not in comp:
+                        comp[y] = n
+                        pila.append(y)
+        return comp
+
+    def _unir_trozos(self) -> int:
+        """En OSM la carretera se corta en rotondas y travesías que no llevan su «ref»: se
+        unen los extremos sueltos con el punto más cercano de otro trozo a menos de PUENTE_M."""
+        comp = self._componentes()
+        if len(set(comp.values())) < 2:
+            return 0
+        celda = 0.003  # ~300 m
+        rejilla: dict[tuple, list[tuple]] = defaultdict(list)
+        for n in self.nodos:
+            rejilla[(int(n[0] / celda), int(n[1] / celda))].append(n)
+        puentes = 0
+        hechos: set[frozenset] = set()
+        extremos = [n for n in self.nodos if len(self.ady[n]) == 1]
+        for e in extremos:
+            cx, cy = int(e[0] / celda), int(e[1] / celda)
+            mejor = None
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for m in rejilla.get((cx + dx, cy + dy), ()):
+                        if comp[m] == comp[e]:
+                            continue
+                        d = dist_m(e, m)
+                        if d < PUENTE_M and (mejor is None or d < mejor[1]):
+                            mejor = (m, d)
+            if mejor and frozenset((e, mejor[0])) not in hechos:
+                m, d = mejor
+                hechos.add(frozenset((e, m)))
+                # Un poco más caro que la carretera, para no preferir atajos
+                self.ady[e].append((m, d * 1.5))
+                self.ady[m].append((e, d * 1.5))
+                puentes += 1
+        return puentes
 
     def cercano(self, p: tuple[float, float]) -> tuple[tuple, float] | None:
         if not self.nodos:
