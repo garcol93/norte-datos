@@ -123,18 +123,29 @@ class Grafo:
         return ruta[::-1]
 
 
+MOTIVOS: dict[str, int] = defaultdict(int)
+
+
 def trazar(grafo: Grafo | None, a: tuple, b: tuple, longitud_m: float) -> tuple[list[tuple], bool]:
-    """Puntos (lat, lon) del tramo y si es aproximado (línea recta)."""
-    if grafo:
-        ca, cb = grafo.cercano(a), grafo.cercano(b)
-        if ca and cb and ca[1] < DISTANCIA_EXTREMO_M and cb[1] < DISTANCIA_EXTREMO_M:
-            ruta = grafo.camino(ca[0], cb[0])
-            if ruta and len(ruta) > 1:
-                largo = sum(dist_m(p, q) for p, q in zip(ruta, ruta[1:]))
-                # Un rodeo mucho más largo que el tramo indica que no es la misma carretera
-                if largo <= max(1.5 * longitud_m, longitud_m + 3000):
-                    return ruta, False
-    return [a, b], True
+    """Puntos (lat, lon) del tramo y si es aproximado (línea recta). Cuenta en MOTIVOS por qué falla."""
+    if not grafo:
+        MOTIVOS["sin vías OSM con esa ref"] += 1
+        return [a, b], True
+    ca, cb = grafo.cercano(a), grafo.cercano(b)
+    if not ca or not cb or ca[1] >= DISTANCIA_EXTREMO_M or cb[1] >= DISTANCIA_EXTREMO_M:
+        lejos = max(ca[1] if ca else 1e9, cb[1] if cb else 1e9)
+        MOTIVOS["extremo lejos de la carretera " + ("<1 km" if lejos < 1000 else "<5 km" if lejos < 5000 else ">5 km")] += 1
+        return [a, b], True
+    ruta = grafo.camino(ca[0], cb[0])
+    if not ruta or len(ruta) < 2:
+        MOTIVOS["sin camino (carretera cortada en OSM)"] += 1
+        return [a, b], True
+    largo = sum(dist_m(p, q) for p, q in zip(ruta, ruta[1:]))
+    # Un rodeo mucho más largo que el tramo indica que no es la misma carretera
+    if largo > max(1.5 * longitud_m, longitud_m + 3000):
+        MOTIVOS["rodeo demasiado largo"] += 1
+        return [a, b], True
+    return ruta, False
 
 
 def simplificar(puntos: list[tuple]) -> list[tuple]:
@@ -203,6 +214,7 @@ def main() -> None:
     o.salida.write_text(json.dumps(salida, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     o.cache.write_text(json.dumps(cache, ensure_ascii=False))
     km = sum(f["properties"]["longitud_m"] for f in features) / 1000
+    print("tramos en línea recta, por motivo:", dict(MOTIVOS))
     print(f"radar móvil: {len(features)} de {len(tramos)} tramos ({km:.0f} km), {aprox} en línea recta, "
           f"{sin_situar} sin situar · consultas nuevas a CartoCiudad: {len(cache) - antes} · {o.salida.stat().st_size // 1024} KB")
     if len(features) < 0.6 * len(tramos):
