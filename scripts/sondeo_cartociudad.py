@@ -40,45 +40,68 @@ def pedir(ruta: str, **params) -> object | None:
     return None
 
 
-def es_pk(c: dict) -> bool:
-    t = f"{c.get('type', '')} {c.get('tip_via', '')}".lower()
-    return "kilom" in t or t.strip().startswith("pk") or "punto kilom" in t
+import math
+import re
+import unicodedata
+
+
+def normal(t: str) -> str:
+    t = unicodedata.normalize("NFKD", t or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]", "", t)
+
+
+# Provincias del PDF que CartoCiudad escribe de otra forma (o al revés)
+ALIAS = {
+    "illesbalears": "baleares", "balears": "baleares", "acoruna": "coruna", "lacoruna": "coruna",
+    "araba": "alava", "arabaalava": "alava", "alavaaraba": "alava", "gipuzkoa": "guipuzcoa", "bizkaia": "vizcaya",
+    "valenciavalencia": "valencia", "castellocastellon": "castellon", "castello": "castellon",
+    "alacantalicante": "alicante", "alacant": "alicante", "ourense": "orense", "lleida": "lerida",
+    "girona": "gerona", "santacruzdetenerife": "tenerife", "laspalmas": "laspalmas",
+}
+
+
+def prov(t: str) -> str:
+    n = normal(t)
+    return ALIAS.get(n, n)
+
+
+def coincide(c: dict, via: str, km: int, provincia: str) -> bool:
+    """La dirección es exactamente «<VÍA> km <km> (…)» y la provincia es la del PDF."""
+    m = re.match(r"^\s*([A-Za-z]{1,4}-?\d{1,4}[A-Za-z]?)\s+km\s+(\d+)", str(c.get("address", "")), re.I)
+    if not m or normal(m.group(1)) != normal(via) or int(m.group(2)) != km:
+        return False
+    p = prov(c.get("province", ""))
+    q = prov(provincia)
+    return not p or not q or p == q or p in q or q in p
 
 
 def coords(c: dict) -> tuple[float, float] | None:
-    for la, lo in (("lat", "lng"), ("lat", "lon"), ("latitude", "longitude")):
-        if c.get(la) not in (None, "") and c.get(lo) not in (None, ""):
-            try:
-                return float(c[la]), float(c[lo])
-            except (TypeError, ValueError):
-                pass
-    return None
-
-
-def situar(via: str, km: float, crudo: list) -> tuple[float, float] | None:
-    q = f"{via} {int(round(km))}"
-    cands = pedir("candidates", q=q, limit=10, no_process="municipio,poblacion,toponimo,expendeduria,ngbe")
-    if len(crudo) < 4:
-        crudo.append((q, cands))
-    if not isinstance(cands, list):
+    try:
+        return float(c["lat"]), float(c["lng"])
+    except (KeyError, TypeError, ValueError):
         return None
-    via_n = via.replace("-", "").upper()
-    for c in cands:
-        if not es_pk(c):
+
+
+def situar(via: str, km: float, provincia: str, crudo: list) -> tuple[float, float] | None:
+    base = int(round(km))
+    for k in (base, base + 1, base - 1):
+        if k < 0:
             continue
-        texto = json.dumps(c, ensure_ascii=False).replace("-", "").upper()
-        if via_n not in texto:
+        q = f"{via} {k}"
+        cands = pedir("candidates", q=q, limit=20, no_process="municipio,poblacion,toponimo,expendeduria,ngbe")
+        if len(crudo) < 3:
+            crudo.append((q, cands))
+        if not isinstance(cands, list):
             continue
-        p = coords(c)
-        if p:
-            return p
-        # Sin coordenadas en el candidato: se piden con «find»
-        f = pedir("find", q=q, type=c.get("type", ""), id=c.get("id", ""))
-        if len(crudo) < 6:
-            crudo.append((f"find {q}", f))
-        if isinstance(f, dict) and (p := coords(f)):
-            return p
+        for c in cands:
+            if coincide(c, via, k, provincia) and (p := coords(c)):
+                return p
     return None
+
+
+def dist_m(a, b) -> float:
+    x = math.radians(b[1] - a[1]) * math.cos(math.radians((a[0] + b[0]) / 2))
+    return 6371000 * math.hypot(x, math.radians(b[0] - a[0]))
 
 
 def main() -> None:
@@ -87,15 +110,18 @@ def main() -> None:
     limite = int(sys.argv[2]) if len(sys.argv) > 2 else len(moviles)
     print(f"tramos móviles: {len(moviles)} · se prueban {min(limite, len(moviles))}")
     crudo: list = []
-    ambos = uno = ninguno = 0
+    ambos = uno = ninguno = incoherentes = 0
     km_ok = km_total = 0.0
     fallos = Counter()
     inicio = time.time()
     for i, f in enumerate(moviles[:limite]):
-        a = situar(f["via"], f["ini"], crudo)
-        b = situar(f["via"], f["fin"], crudo)
+        a = situar(f["via"], f["ini"], f["prov"], crudo)
+        b = situar(f["via"], f["fin"], f["prov"], crudo)
         km = abs(f["fin"] - f["ini"])
         km_total += km
+        if a and b and dist_m(a, b) > 1.2 * km * 1000 + 2000:
+            incoherentes += 1
+            a = b = None
         if a and b:
             ambos += 1
             km_ok += km
@@ -112,6 +138,7 @@ def main() -> None:
     n = max(ambos + uno + ninguno, 1)
     print(f"situados los dos extremos: {ambos} ({100 * ambos / n:.0f} %) · {km_ok:.0f} de {km_total:.0f} km ({100 * km_ok / max(km_total, 1):.0f} %)")
     print(f"solo un extremo: {uno} ({100 * uno / n:.0f} %) · ninguno: {ninguno} ({100 * ninguno / n:.0f} %)")
+    print(f"descartados por extremos incoherentes (más lejos que el tramo): {incoherentes}")
     print("sin situar por tipo de vía (prefijo):", fallos.most_common(15))
     print(f"tiempo: {time.time() - inicio:.0f} s")
 
