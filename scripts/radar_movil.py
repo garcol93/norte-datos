@@ -207,7 +207,7 @@ def main() -> None:
     sha = hashlib.sha256(o.pdf.read_bytes()).hexdigest()
     salida = {
         "type": "FeatureCollection",
-        "fuente": {"pdf_sha256": sha, "tramos_pdf": len(tramos)},
+        "fuente": {"pdf_sha256": sha, "tramos_pdf": len(tramos), "sin_situar": sin_situar, "en_linea_recta": dict(MOTIVOS)},
         "features": features,
     }
     o.salida.parent.mkdir(parents=True, exist_ok=True)
